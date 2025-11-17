@@ -120,6 +120,7 @@ CHANNEL_CONFIG = {
     3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B]},
     4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B]},
 }
+# TODO: Add 2 more channels for battery voltage, power(?) and low voltage bus & power(?)
 
 
 def FormatI2cAddr(Address: int) -> str:
@@ -233,6 +234,103 @@ def SensorMuxScan(LogsDir: str) -> bool:
         finally:
             try:
                 Bus.close()
+            except Exception:
+                pass
+
+    return OverallOk
+
+def CanPreflightCheck(LogsDir: str, TimeoutSec: float = 8.0) -> bool:
+    """
+    Broadcast a 'preflight check' CAN command and wait for health responses
+    from all expected nodes.
+
+    Returns True if all nodes respond within TimeoutSec, False otherwise.
+    Logs details to can_preflight.log inside LogsDir.
+    """
+    LogPath = os.path.join(LogsDir, "can_preflight.log")
+    OsDir = os.path.dirname(LogPath)
+    if OsDir:
+        os.makedirs(OsDir, exist_ok=True)
+
+    OverallOk = True
+    PendingNodes = set(EXPECTED_CAN_NODE_IDS)
+
+    with open(LogPath, "a", encoding="utf-8") as LogFile:
+        def LogLine(Text: str) -> None:
+            print(Text)
+            LogFile.write(Text + "\n")
+
+        LogLine("=== CAN Preflight Check ===")
+        LogLine(f"Log file: {LogPath}")
+        LogLine(f"Timestamp: {GetIsoTimestamp()}")
+        LogLine(f"Channel: {CAN_CHANNEL}")
+        LogLine(f"Expected node IDs: {', '.join(f'0x{NodeId:03X}' for NodeId in EXPECTED_CAN_NODE_IDS)}")
+
+        try:
+            Bus = can.Bus(channel=CAN_CHANNEL, interface="socketcan")
+        except Exception as Exc:
+            LogLine(f"ERROR: Failed to open CAN bus '{CAN_CHANNEL}': {Exc}")
+            LogLine("PRECHECK_CAN: FAIL (cannot open CAN bus)")
+            return False
+
+        try:
+            # Send a single broadcast "preflight" request
+            try:
+                DataBytes = b"PRECHK"  # 6 bytes ASCII payload; adjust if you want
+                Msg = can.Message(
+                    arbitration_id=CAN_PREFLIGHT_REQUEST_ID,
+                    data=DataBytes,
+                    is_extended_id=False,
+                )
+                Bus.send(Msg)
+                LogLine(f"Sent preflight request: ID=0x{CAN_PREFLIGHT_REQUEST_ID:03X}, Data={DataBytes!r}")
+            except Exception as Exc:
+                LogLine(f"ERROR: Failed to send preflight CAN frame: {Exc}")
+                LogLine("PRECHECK_CAN: FAIL (send error)")
+                return False
+
+            Deadline = time.time() + TimeoutSec
+            LogLine(f"Waiting up to {TimeoutSec:.1f}s for node health responses...")
+
+            while PendingNodes and time.time() < Deadline:
+                Remaining = max(0.0, Deadline - time.time())
+                if Remaining <= 0.0:
+                    break
+
+                try:
+                    Msg = Bus.recv(timeout=Remaining)
+                except Exception as Exc:
+                    LogLine(f"WARNING: Error while receiving CAN frame: {Exc}")
+                    break
+
+                if Msg is None:
+                    # Timeout
+                    break
+
+                NodeId = Msg.arbitration_id
+                DataHex = " ".join(f"{Byte:02X}" for Byte in Msg.data)
+
+                if NodeId in PendingNodes:
+                    PendingNodes.remove(NodeId)
+                    LogLine(
+                        f"Received health from node ID=0x{NodeId:03X}, DLC={Msg.dlc}, Data=[{DataHex}]"
+                    )
+                else:
+                    LogLine(
+                        f"Received CAN frame from unexpected ID=0x{NodeId:03X}, DLC={Msg.dlc}, Data=[{DataHex}]"
+                    )
+
+            if PendingNodes:
+                OverallOk = False
+                MissingStr = ", ".join(f"0x{NodeId:03X}" for NodeId in sorted(PendingNodes))
+                LogLine(f"ERROR: Did not receive health from node(s): {MissingStr}")
+                LogLine("PRECHECK_CAN: FAIL (missing node responses)")
+            else:
+                LogLine("PRECHECK_CAN: OK (all nodes responded)")
+
+        finally:
+            try:
+                Bus.shutdown()
             except Exception:
                 pass
 
