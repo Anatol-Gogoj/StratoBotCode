@@ -24,6 +24,8 @@ import threading
 import time
 from typing import Optional
 
+from smbus2 import SMBus  # For I2C sensor preflight
+
 
 def GetIsoTimestamp() -> str:
     Now = datetime.datetime.now(datetime.timezone.utc).astimezone()
@@ -87,6 +89,143 @@ def ReadThrottleRaw() -> str:
         pass
     return "throttled=N/A"
 
+
+# ---------------------------------------------------------------------------
+# I2C sensor preflight via TCA/PCA9548A mux
+# ---------------------------------------------------------------------------
+
+MUX_ADDR = 0x70
+
+# Expected devices per channel with possible addresses
+CHANNEL_CONFIG = {
+    0: {"name": "TSL2591", "expected_addrs": [0x29]},
+    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77]},
+    2: {"name": "VEML7700", "expected_addrs": [0x10]},
+    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B]},
+    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B]},
+}
+
+
+def FormatI2cAddr(Address: int) -> str:
+    return f"0x{Address:02X}"
+
+
+def SelectMuxChannel(Bus: SMBus, Channel: int) -> None:
+    """Select a single TCA/PCA9548A channel (0-7)."""
+    if not (0 <= Channel <= 7):
+        raise ValueError("Channel must be 0–7")
+    Mask = 1 << Channel
+    Bus.write_byte(MUX_ADDR, Mask)
+    time.sleep(0.005)
+
+
+def ScanMuxChannel(Bus: SMBus, Channel: int):
+    """Enable channel, then scan for any I2C devices on it."""
+    SelectMuxChannel(Bus, Channel)
+    Found = []
+    for Address in range(0x03, 0x78):
+        try:
+            Bus.read_byte(Address)
+            Found.append(Address)
+        except OSError:
+            continue
+    return Found
+
+
+def SensorMuxScan(LogsDir: str) -> bool:
+    """
+    Run I2C sensor preflight through the mux.
+
+    Returns True if all expected sensors are present on the correct channels,
+    False otherwise. Logs details to sensor_preflight.log inside LogsDir.
+    """
+    LogPath = os.path.join(LogsDir, "sensor_preflight.log")
+    OsDir = os.path.dirname(LogPath)
+    if OsDir:
+        os.makedirs(OsDir, exist_ok=True)
+
+    OverallOk = True
+
+    with open(LogPath, "a", encoding="utf-8") as LogFile:
+        def LogLine(Text: str) -> None:
+            print(Text)
+            LogFile.write(Text + "\n")
+
+        LogLine("=== I2C Sensor Preflight via TCA/PCA9548A ===")
+        LogLine(f"Log file: {LogPath}")
+        LogLine(f"Timestamp: {GetIsoTimestamp()}")
+        LogLine("Opening I2C bus 1 and checking multiplexer at 0x70...")
+
+        try:
+            Bus = SMBus(1)
+        except Exception as Exc:
+            LogLine(f"ERROR: Failed to open I2C bus 1: {Exc}")
+            LogLine("PRECHECK_SENSORS: FAIL (cannot open I2C bus)")
+            return False
+
+        try:
+            try:
+                Bus.read_byte(MUX_ADDR)
+                LogLine("OK: Multiplexer responded at 0x70")
+            except OSError:
+                LogLine("ERROR: Could not talk to mux at 0x70 on I2C bus 1.")
+                LogLine("Check I2C is enabled and wiring is correct.")
+                LogLine("PRECHECK_SENSORS: FAIL (mux unreachable)")
+                OverallOk = False
+                return OverallOk
+
+            LogLine("")
+
+            for Channel, Info in CHANNEL_CONFIG.items():
+                Name = Info["name"]
+                Expected = Info["expected_addrs"]
+
+                LogLine(f"=== Channel {Channel} ({Name}) ===")
+                Devices = ScanMuxChannel(Bus, Channel)
+                if Devices:
+                    AddrList = ", ".join(FormatI2cAddr(A) for A in Devices)
+                    LogLine(f"  Found device(s): {AddrList}")
+                else:
+                    AddrList = "None"
+                    LogLine("  No devices responded on this channel!")
+
+                ExpectedFound = [A for A in Devices if A in Expected]
+                if ExpectedFound:
+                    MatchStr = ", ".join(FormatI2cAddr(A) for A in ExpectedFound)
+                    LogLine(f"  STATUS: OK – expected address(es) present ({MatchStr})")
+                else:
+                    ExpStr = ", ".join(FormatI2cAddr(A) for A in Expected)
+                    if Devices:
+                        LogLine(f"  STATUS: MISMATCH – expected {ExpStr}, got {AddrList}")
+                    else:
+                        LogLine(f"  STATUS: FAIL – expected {ExpStr}, but found nothing")
+                    OverallOk = False
+
+                LogLine("")
+
+            try:
+                Bus.write_byte(MUX_ADDR, 0x00)
+                LogLine("All mux channels deselected.")
+            except Exception:
+                LogLine("WARNING: Failed to deselect mux channels at end of preflight.")
+
+            if OverallOk:
+                LogLine("PRECHECK_SENSORS: OK")
+            else:
+                LogLine("PRECHECK_SENSORS: FAIL (one or more channels bad)")
+
+        finally:
+            try:
+                Bus.close()
+            except Exception:
+                pass
+
+    return OverallOk
+
+
+# ---------------------------------------------------------------------------
+# Existing telemetry / thermal watchdog and flight logic
+# ---------------------------------------------------------------------------
 
 def TelemetryLoggerLoop(LogsDir: str, NvmeDev: str, StopEvent: threading.Event) -> None:
     TelemetryFile = os.path.join(LogsDir, "telemetry.csv")
@@ -241,9 +380,18 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
     print(f"OK: {AvailGb}G free (>= {RequiredFreeGb}G).")
     print()
 
-    # 3) Log camera list
+    # 3) I2C sensor preflight via mux
+    print(f"[3] Running I2C sensor preflight (logs in {LogsDir}/sensor_preflight.log)...")
+    SensorsOk = SensorMuxScan(LogsDir)
+    if not SensorsOk:
+        print("ERROR: I2C sensor preflight FAILED. See sensor_preflight.log for details.")
+        sys.exit(1)
+    print("OK: I2C sensor preflight passed.")
+    print()
+
+    # 4) Log camera list
     CameraLog = os.path.join(LogsDir, "camera_list.log")
-    print(f"[3] Listing cameras (logging to {CameraLog})...")
+    print(f"[4] Listing cameras (logging to {CameraLog})...")
     if shutil.which("rpicam-hello") is not None:
         try:
             with open(CameraLog, "w", encoding="utf-8") as File:
@@ -261,8 +409,8 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
         print("WARNING: rpicam-hello not found in PATH.")
     print()
 
-    # 4) 5-second test recording from cam0
-    print("[4] Recording 5 s test from cam0 (OV5647)...")
+    # 5) 5-second test recording from cam0
+    print("[5] Recording 5 s test from cam0 (OV5647)...")
     Cam0Test = os.path.join(Cam0Dir, "cam0_test.h264")
     Cam0Log = os.path.join(LogsDir, "cam0_preflight_stderr.log")
     with open(Cam0Log, "w", encoding="utf-8") as Err:
@@ -291,8 +439,8 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
     print(f"OK: cam0 test file recorded ({Cam0Test}).")
     print()
 
-    # 5) 5-second test recording from cam1
-    print("[5] Recording 5 s test from cam1 (IMX708)...")
+    # 6) 5-second test recording from cam1
+    print("[6] Recording 5 s test from cam1 (IMX708)...")
     Cam1Test = os.path.join(Cam1Dir, "cam1_test.h264")
     Cam1Log = os.path.join(LogsDir, "cam1_preflight_stderr.log")
     with open(Cam1Log, "w", encoding="utf-8") as Err:
@@ -321,9 +469,9 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
     print(f"OK: cam1 test file recorded ({Cam1Test}).")
     print()
 
-    # 6) Log temps
+    # 7) Log temps
     TempsPath = os.path.join(LogsDir, "temps_now.txt")
-    print(f"[6] Logging current temps to {TempsPath}...")
+    print(f"[7] Logging current temps to {TempsPath}...")
     with open(TempsPath, "w", encoding="utf-8") as File:
         CpuTempMilli = ReadCpuTempMilli()
         File.write(f"CPU temp (mC): {CpuTempMilli}\n")
