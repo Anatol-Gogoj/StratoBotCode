@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from typing import Optional
+import can  # python-can for CAN preflight
 
 from smbus2 import SMBus  # For I2C sensor preflight
 
@@ -89,6 +90,21 @@ def ReadThrottleRaw() -> str:
         pass
     return "throttled=N/A"
 
+# ---------------------------------------------------------------------------
+# CAN preflight parameters
+# ---------------------------------------------------------------------------
+
+CAN_CHANNEL = "can0"
+CAN_PREFLIGHT_REQUEST_ID = 0x100  # Broadcast-ish "preflight" command ID
+
+# Expected node health response IDs (one per Pi Zero 2 W node).
+# Adjust these to match your node ID scheme.
+EXPECTED_CAN_NODE_IDS = [
+    0x200,  # Node 0
+    0x201,  # Node 1
+    0x202,  # Node 2
+    0x203,  # Node 3
+]
 
 # ---------------------------------------------------------------------------
 # I2C sensor preflight via TCA/PCA9548A mux
@@ -349,7 +365,7 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
     EnsureDir(Cam1Dir)
     EnsureDir(LogsDir)
 
-    print("=== Stratobot Preflight Check ===")
+    print("=== StratoBot Preflight Check ===")
     print(f"Preflight directory: {FlightDir}")
 
     # 1) Check mount and write access
