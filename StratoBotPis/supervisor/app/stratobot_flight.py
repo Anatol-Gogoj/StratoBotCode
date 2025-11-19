@@ -104,6 +104,7 @@ EXPECTED_CAN_NODE_IDS = [
     0x201,  # Node 1
     0x202,  # Node 2
     0x203,  # Node 3
+    0x204,  # Node 4 - RPi Pico 2 W
 ]
 
 # ---------------------------------------------------------------------------
@@ -114,11 +115,12 @@ MUX_ADDR = 0x70
 
 # Expected devices per channel with possible addresses
 CHANNEL_CONFIG = {
-    0: {"name": "TSL2591", "expected_addrs": [0x29]},
-    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77]},
-    2: {"name": "VEML7700", "expected_addrs": [0x10]},
-    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B]},
-    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B]},
+    0: {"name": "TSL2591", "expected_addrs": [0x29]}, # Light sensor
+    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77]}, # Pressure sensor
+    2: {"name": "VEML7700", "expected_addrs": [0x10]}, # Light sensor
+    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B]}, # IMU
+    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B]}, # Temp sensor
+    5: {"name": "INA238", "expected_addrs": [0x40]}, # Voltage/current sensor - Battery-side
 }
 # TODO: Add 2 more channels for battery voltage, power(?) and low voltage bus & power(?)
 
