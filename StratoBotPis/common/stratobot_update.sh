@@ -4,10 +4,16 @@ set -e
 # CONFIG
 NODE_USER="admin"
 NODE_HOME="/home/${NODE_USER}"
+
+# Repo root: where .git lives
 REPO_URL="https://github.com/Anatol-Gogoj/StratoBotCode"
-REPO_DIR="${NODE_HOME}/StratoBotPis"
-NODE_NAME="$(hostname)"                  # expect StratoBotNode00/01/02/03
+REPO_ROOT="${NODE_HOME}/StratoBotPis"
+
+# Code root inside the repo (because the repo has a StratoBotPis/ folder)
+REPO_DIR="${REPO_ROOT}/StratoBotPis"
+NODE_NAME="$(hostname)"                  # expect StratoBotNode00/01/02/03/04
 NODE_DIR="${REPO_DIR}/nodes/${NODE_NAME}"
+
 VENV_DIR="${NODE_HOME}/stratobot_env"
 APP_TARGET_DIR="${NODE_HOME}/stratobot_app"
 STATUS_DIR="/var/lib/stratobot"
@@ -33,21 +39,19 @@ UpdateStatus="FAIL"
 UpdateReason="unknown"
 
 # 1) Clone or update repo
-if [ ! -d "${REPO_DIR}/.git" ]; then
-    log "Repo not found, cloning into ${REPO_DIR}..."
-    if ! sudo -u "${NODE_USER}" git clone "${REPO_URL}" "${REPO_DIR}" >>"${LOG_FILE}" 2>&1; then
+if [ ! -d "${REPO_ROOT}/.git" ]; then
+    log "Repo not found, cloning into ${REPO_ROOT}..."
+    if ! sudo -u "${NODE_USER}" git clone "${REPO_URL}" "${REPO_ROOT}" >>"${LOG_FILE}" 2>&1; then
         log "ERROR: git clone failed (likely no internet). Using existing code, if any."
         UpdateReason="git_clone_failed"
-        # Do NOT exit; we want existing code to run
     else
         log "Repo clone OK."
     fi
 else
     log "Repo exists, attempting git pull..."
-    if ! sudo -u "${NODE_USER}" git -C "${REPO_DIR}" pull --ff-only >>"${LOG_FILE}" 2>&1; then
+    if ! sudo -u "${NODE_USER}" git -C "${REPO_ROOT}" pull --ff-only >>"${LOG_FILE}" 2>&1; then
         log "WARNING: git pull failed (no internet or merge issue). Keeping previous version."
         UpdateReason="git_pull_failed"
-        # Keep going with old code
     else
         log "Repo pull OK."
     fi
