@@ -115,12 +115,12 @@ MUX_ADDR = 0x70
 
 # Expected devices per channel with possible addresses
 CHANNEL_CONFIG = {
-    0: {"name": "TSL2591", "expected_addrs": [0x29]}, # Light sensor
-    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77]}, # Pressure sensor
-    2: {"name": "VEML7700", "expected_addrs": [0x10]}, # Light sensor
-    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B]}, # IMU
-    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B]}, # Temp sensor
-    5: {"name": "INA238", "expected_addrs": [0x40]}, # Voltage/current sensor - Battery-side
+    0: {"name": "TSL2591", "expected_addrs": [0x29], "required": False}, # Light sensor
+    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77], "required": True}, # Pressure sensor
+    2: {"name": "VEML7700", "expected_addrs": [0x10], "required": False}, # Light sensor
+    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B], "required": False}, # IMU
+    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B], "required": True}, # Temp sensor
+    5: {"name": "INA238", "expected_addrs": [0x40], "required": True}, # Voltage/current sensor - Battery-side
 }
 # TODO: Add 2 more channels for battery voltage, power(?) and low voltage bus & power(?)
 
@@ -155,15 +155,21 @@ def SensorMuxScan(LogsDir: str) -> bool:
     """
     Run I2C sensor preflight through the mux.
 
-    Returns True if all expected sensors are present on the correct channels,
-    False otherwise. Logs details to sensor_preflight.log inside LogsDir.
+    Returns True if all REQUIRED sensors are present on the correct channels.
+    Optional sensors may be missing; this will produce WARN messages but still
+    return True as long as all required channels are OK.
+
+    Logs details to sensor_preflight.log inside LogsDir.
     """
+    
     LogPath = os.path.join(LogsDir, "sensor_preflight.log")
     OsDir = os.path.dirname(LogPath)
     if OsDir:
         os.makedirs(OsDir, exist_ok=True)
 
     OverallOk = True
+    RequiredFail = False
+    OptionalFail = False
 
     with open(LogPath, "a", encoding="utf-8") as LogFile:
         def LogLine(Text: str) -> None:
@@ -183,6 +189,7 @@ def SensorMuxScan(LogsDir: str) -> bool:
             return False
 
         try:
+            # Check that the mux itself responds
             try:
                 Bus.read_byte(MUX_ADDR)
                 LogLine("OK: Multiplexer responded at 0x70")
@@ -191,16 +198,20 @@ def SensorMuxScan(LogsDir: str) -> bool:
                 LogLine("Check I2C is enabled and wiring is correct.")
                 LogLine("PRECHECK_SENSORS: FAIL (mux unreachable)")
                 OverallOk = False
+                RequiredFail = True
                 return OverallOk
 
             LogLine("")
 
+            # Scan configured channels
             for Channel, Info in CHANNEL_CONFIG.items():
                 Name = Info["name"]
                 Expected = Info["expected_addrs"]
+                Required = Info.get("required", True)
 
                 LogLine(f"=== Channel {Channel} ({Name}) ===")
                 Devices = ScanMuxChannel(Bus, Channel)
+
                 if Devices:
                     AddrList = ", ".join(FormatI2cAddr(A) for A in Devices)
                     LogLine(f"  Found device(s): {AddrList}")
@@ -215,23 +226,41 @@ def SensorMuxScan(LogsDir: str) -> bool:
                 else:
                     ExpStr = ", ".join(FormatI2cAddr(A) for A in Expected)
                     if Devices:
-                        LogLine(f"  STATUS: MISMATCH – expected {ExpStr}, got {AddrList}")
+                        if Required:
+                            LogLine(f"  STATUS: FAIL – REQUIRED sensor mismatch (expected {ExpStr}, got {AddrList})")
+                            RequiredFail = True
+                            OverallOk = False
+                        else:
+                            LogLine(f"  STATUS: WARN – optional sensor mismatch (expected {ExpStr}, got {AddrList})")
+                            OptionalFail = True
                     else:
-                        LogLine(f"  STATUS: FAIL – expected {ExpStr}, but found nothing")
-                    OverallOk = False
+                        if Required:
+                            LogLine(f"  STATUS: FAIL – REQUIRED sensor missing (expected {ExpStr}, but found nothing)")
+                            RequiredFail = True
+                            OverallOk = False
+                        else:
+                            LogLine(f"  STATUS: WARN – optional sensor missing (expected {ExpStr}, but found nothing)")
+                            OptionalFail = True
 
                 LogLine("")
 
+            # Deselect all channels at the end
             try:
                 Bus.write_byte(MUX_ADDR, 0x00)
                 LogLine("All mux channels deselected.")
             except Exception:
                 LogLine("WARNING: Failed to deselect mux channels at end of preflight.")
 
-            if OverallOk:
-                LogLine("PRECHECK_SENSORS: OK")
+            # Summary line
+            if RequiredFail:
+                LogLine("PRECHECK_SENSORS: FAIL (one or more REQUIRED channels bad)")
+                OverallOk = False
+            elif OptionalFail:
+                LogLine("PRECHECK_SENSORS: WARN (one or more optional channels bad)")
+                OverallOk = True
             else:
-                LogLine("PRECHECK_SENSORS: FAIL (one or more channels bad)")
+                LogLine("PRECHECK_SENSORS: OK")
+                OverallOk = True
 
         finally:
             try:
@@ -240,6 +269,7 @@ def SensorMuxScan(LogsDir: str) -> bool:
                 pass
 
     return OverallOk
+
 
 def CanPreflightCheck(LogsDir: str, TimeoutSec: float = 8.0) -> bool:
     """
