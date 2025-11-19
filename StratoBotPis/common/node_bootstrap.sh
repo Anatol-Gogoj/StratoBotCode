@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# StratoBot node bootstrap script - **ONLY FOR PI ZERO 2W NODES**
+# StratoBot node bootstrap script - ONLY FOR PI ZERO 2W NODES
 #
 # Run once as root on each Pi Zero 2W node:
 #   sudo bash node_bootstrap.sh
@@ -17,7 +17,7 @@ set -e
 
 # ----------------------------- CONFIG ---------------------------------
 
-NODE_USER="admin"
+NODE_USER="admin"   # adjust if your login user is different
 REPO_URL="https://github.com/Anatol-Gogoj/StratoBotCode"
 
 # Where the repo will live on the node (this is the .git root)
@@ -26,9 +26,12 @@ REPO_ROOT="/home/${NODE_USER}/StratoBotPis"
 # Inside the repo you have a StratoBotPis/ folder with common/, nodes/, etc.
 REPO_DIR="${REPO_ROOT}/StratoBotPis"
 
-UPDATE_SCRIPT_DEST="/usr/local/sbin/stratobot_node_update.sh"
+# Update script in repo and where it will be installed
+UPDATE_SCRIPT_SRC="${REPO_DIR}/common/stratobot_node_update.sh"
+UPDATE_SCRIPT_DEST="/usr/local/sbin/stratobot_update.sh"
+
 STATUS_DIR="/var/lib/stratobot"
-SYSTEMD_UNIT="/etc/systemd/system/stratobot-node-update.service"
+SYSTEMD_UNIT="/etc/systemd/system/stratobot-update.service"
 
 # --------------------------- SANITY CHECKS -----------------------------
 
@@ -42,7 +45,7 @@ if ! id "${NODE_USER}" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "=== Stratobot node bootstrap starting (hostname=$(hostname)) ==="
+echo "=== Stratobot NODE bootstrap starting (hostname=$(hostname)) ==="
 echo "Using NODE_USER=${NODE_USER}"
 echo "Repo URL = ${REPO_URL}"
 echo "Repo root = ${REPO_ROOT}"
@@ -79,13 +82,11 @@ echo
 
 # ---------------------- INSTALL UPDATE SCRIPT -------------------------
 
-UPDATE_SCRIPT_SRC="${REPO_DIR}/common/stratobot_update.sh"
-
 echo "[3/5] Installing stratobot_update.sh..."
 
 if [ ! -f "${UPDATE_SCRIPT_SRC}" ]; then
     echo "ERROR: ${UPDATE_SCRIPT_SRC} not found in repo."
-    echo "Make sure common/stratobot_update.sh exists and commit/push it."
+    echo "Make sure common/stratobot_node_update.sh exists and is committed."
     exit 1
 fi
 
@@ -127,7 +128,7 @@ systemctl enable stratobot-update.service
 systemctl start stratobot-update.service
 
 echo
-echo "=== Stratobot node bootstrap complete ==="
+echo "=== Stratobot NODE bootstrap complete ==="
 echo "Service status:"
 systemctl status stratobot-update.service --no-pager || true
 
