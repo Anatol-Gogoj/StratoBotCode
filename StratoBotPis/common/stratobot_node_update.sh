@@ -137,7 +137,7 @@ else
 fi
 
 # If we got this far without any specific failure reason beyond the git warnings,
-# consider it a success. You can further tighten this logic if needed.
+# consider it a success.
 if [ "${UpdateReason}" = "unknown" ] || [[ "${UpdateReason}" == git_* ]]; then
     UpdateStatus="OK"
     UpdateReason="none_or_git_warning"

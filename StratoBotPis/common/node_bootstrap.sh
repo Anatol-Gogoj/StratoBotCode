@@ -26,9 +26,9 @@ REPO_ROOT="/home/${NODE_USER}/StratoBotPis"
 # Inside the repo you have a StratoBotPis/ folder with common/, nodes/, etc.
 REPO_DIR="${REPO_ROOT}/StratoBotPis"
 
-UPDATE_SCRIPT_DEST="/usr/local/sbin/stratobot_update.sh"
+UPDATE_SCRIPT_DEST="/usr/local/sbin/stratobot_node_update.sh"
 STATUS_DIR="/var/lib/stratobot"
-SYSTEMD_UNIT="/etc/systemd/system/stratobot-update.service"
+SYSTEMD_UNIT="/etc/systemd/system/stratobot-node-update.service"
 
 # --------------------------- SANITY CHECKS -----------------------------
 
