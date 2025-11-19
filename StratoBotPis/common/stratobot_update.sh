@@ -5,7 +5,7 @@ set -e
 NODE_USER="admin"
 NODE_HOME="/home/${NODE_USER}"
 REPO_URL="https://github.com/Anatol-Gogoj/StratoBotCode"
-REPO_DIR="${NODE_HOME}/StratoBotNodes"
+REPO_DIR="${NODE_HOME}/StratoBotPis"
 NODE_NAME="$(hostname)"                  # expect StratoBotNode00/01/02/03
 NODE_DIR="${REPO_DIR}/nodes/${NODE_NAME}"
 VENV_DIR="${NODE_HOME}/stratobot_env"
