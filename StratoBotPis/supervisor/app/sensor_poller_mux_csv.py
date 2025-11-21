@@ -53,7 +53,7 @@ def QuaternionToEulerDeg(w, x, y, z):
     # Pitch (Y-axis rotation)
     Pitch = math.degrees(
         math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))
-    )
+    ))
     # Yaw (Z-axis rotation)
     Yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
     return Yaw, Pitch, Roll
