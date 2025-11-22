@@ -35,6 +35,9 @@ from adafruit_ina23x import INA23X
 import adafruit_gps
 import serial
 
+# Cached path for NVMe temperature (if we find one)
+NVME_TEMP_PATH = None
+
 
 def GetIsoTimestamp() -> str:
     Now = datetime.datetime.now(datetime.timezone.utc).astimezone()
@@ -52,11 +55,111 @@ def QuaternionToEulerDeg(w, x, y, z):
     Roll = math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
     # Pitch (Y-axis rotation)
     Pitch = math.degrees(
-        math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))
-    ))
+        math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    )
     # Yaw (Z-axis rotation)
     Yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
     return Yaw, Pitch, Roll
+
+
+def ReadSysfsTempC(Path: str) -> float:
+    """Read a temperature from a sysfs node and return degC (handles milli-degC)."""
+    with open(Path, "r", encoding="ascii") as F:
+        Raw = F.read().strip()
+    Val = float(Raw)
+    # Heuristic: Raspberry Pi and NVMe temps come in millidegC (e.g. 50000)
+    if Val > 200.0:
+        Val /= 1000.0
+    return Val
+
+
+def GetCpuTempC():
+    """
+    Pi CPU temperature from the main thermal zone.
+    Typical path on Raspberry Pi: /sys/class/thermal/thermal_zone0/temp
+    """
+    Path = "/sys/class/thermal/thermal_zone0/temp"
+    if os.path.isfile(Path):
+        return ReadSysfsTempC(Path)
+    return None
+
+
+def GetGpuTempC():
+    """
+    Try to find a thermal zone whose 'type' field looks like GPU/V3D/etc
+    and return its temperature in degC. If not found, returns None.
+    """
+    Base = "/sys/class/thermal"
+    if not os.path.isdir(Base):
+        return None
+
+    for I in range(0, 16):
+        ZoneDir = os.path.join(Base, f"thermal_zone{I}")
+        TypePath = os.path.join(ZoneDir, "type")
+        TempPath = os.path.join(ZoneDir, "temp")
+        if not (os.path.isfile(TypePath) and os.path.isfile(TempPath)):
+            continue
+        try:
+            with open(TypePath, "r", encoding="ascii") as F:
+                TType = F.read().strip().lower()
+        except Exception:
+            continue
+
+        # Targets can be adjusted as needed once you see actual types on the Pi 5
+        if any(K in TType for K in ("gpu", "v3d", "gpu-thermal", "graphics")):
+            try:
+                return ReadSysfsTempC(TempPath)
+            except Exception:
+                return None
+
+    return None
+
+
+def FindNvmeTempPath():
+    """
+    Best-effort search for an NVMe temperature sysfs node.
+    Caches the first found path in NVME_TEMP_PATH.
+    """
+    global NVME_TEMP_PATH
+    if NVME_TEMP_PATH is not None:
+        return NVME_TEMP_PATH
+
+    # Preferred: walk /sys/class/hwmon and look for an 'nvme' device
+    Base = "/sys/class/hwmon"
+    if os.path.isdir(Base):
+        for Entry in os.listdir(Base):
+            HPath = os.path.join(Base, Entry)
+            NamePath = os.path.join(HPath, "name")
+            TempPath = os.path.join(HPath, "temp1_input")
+            if not (os.path.isfile(NamePath) and os.path.isfile(TempPath)):
+                continue
+            try:
+                with open(NamePath, "r", encoding="ascii") as F:
+                    Name = F.read().strip().lower()
+            except Exception:
+                continue
+            if "nvme" in Name and os.path.isfile(TempPath):
+                NVME_TEMP_PATH = TempPath
+                return NVME_TEMP_PATH
+
+    # Fallback: common direct path on some NVMe setups
+    Fallback = "/sys/block/nvme0n1/device/hwmon/hwmon0/temp1_input"
+    if os.path.isfile(Fallback):
+        NVME_TEMP_PATH = Fallback
+        return NVME_TEMP_PATH
+
+    return None
+
+
+def GetNvmeTempC():
+    """
+    NVMe temperature in degC from hwmon if available.
+    Returns None if not present.
+    """
+    Path = FindNvmeTempPath()
+    if Path is None:
+        return None
+    return ReadSysfsTempC(Path)
 
 
 def InitSensors():
@@ -65,7 +168,13 @@ def InitSensors():
     Tca = adafruit_tca9548a.TCA9548A(I2c, address=0x70)
 
     # Channel assignments:
-    # 0: TSL2591, 1: BMP390, 2: VEML7700, 3: BNO085, 4: ADT7410, 5: INA238
+    # 0: TSL2591       (lux)
+    # 1: BMP390        (pressure + temperature)
+    # 2: VEML7700      (lux, optional)
+    # 3: BNO085        (IMU)
+    # 4: ADT7410       (board temp near Pi/sensors)
+    # 5: INA238_BATT   (battery pack side, pre DC-DC)
+    # 6: INA238_5V_BUS (regulated 5V bus after DC-DC)
 
     # TSL2591 light sensor
     Tsl = adafruit_tsl2591.TSL2591(Tca[0])
@@ -81,7 +190,7 @@ def InitSensors():
     try:
         Veml = adafruit_veml7700.VEML7700(Tca[2])
     except Exception as Exc:
-        print(f"WARNING: VEML7700 not found on mux channel 2 at 0x10: {Exc}")
+        print(f"WARNING: VEML7700 not found on mux channel 2: {Exc}")
         Veml = None
 
     # BNO085 IMU
@@ -114,8 +223,16 @@ def InitSensors():
     Adt = adafruit_adt7410.ADT7410(Tca[4])
     Adt.high_resolution = True  # 16-bit mode
 
-    # INA238 current/voltage/power monitor
-    Ina = INA23X(Tca[5])
+    # INA238 current/voltage/power monitors
+    # Battery pack side (pre DC-DC)
+    InaBat = INA23X(Tca[5])
+
+    # 5V bus side (post DC-DC, channel 6 is optional but expected in your setup)
+    try:
+        Ina5V = INA23X(Tca[6])
+    except Exception as Exc:
+        print(f"WARNING: 5V bus INA238 not found on mux channel 6: {Exc}")
+        Ina5V = None
 
     # GPS on /dev/serial0 (optional)
     try:
@@ -135,7 +252,8 @@ def InitSensors():
         "VEML": Veml,
         "BNO": Bno,
         "ADT": Adt,
-        "INA": Ina,
+        "INA_BAT": InaBat,
+        "INA_5V": Ina5V,
         "GPS": Gps,
     }
 
@@ -167,9 +285,15 @@ def InitCsv(FilePath: str):
         # bno085_stability_class: Stability classification string (e.g. "Stable", "In motion").
         # bno085_activity_class: Activity classification dict/label (e.g. walking/running).
         # adt7410_temp_C: ADT7410 board temperature [deg C] (near Pi / sensor board).
-        # ina238_bus_V: INA238 bus voltage [V] (pack or rail being monitored).
-        # ina238_current_A: INA238 current [A] (through shunt).
-        # ina238_power_W: INA238 computed power [W].
+        # cpu_temp_C: Pi CPU temperature [deg C] from /sys/class/thermal.
+        # gpu_temp_C: Pi GPU/V3D temperature [deg C] (best-effort from thermal zones).
+        # nvme_temp_C: NVMe SSD controller temperature [deg C] from hwmon (if available).
+        # ina238_batt_bus_V: INA238 bus voltage [V] on battery pack side (pre DC-DC).
+        # ina238_batt_current_A: INA238 current [A] through battery-side shunt.
+        # ina238_batt_power_W: INA238 computed power [W] on battery pack side.
+        # ina238_5v_bus_V: INA238 bus voltage [V] on regulated 5 V bus (post DC-DC).
+        # ina238_5v_current_A: INA238 current [A] on 5 V bus shunt.
+        # ina238_5v_power_W: INA238 computed power [W] on 5 V bus.
         # gps_has_fix: Boolean flag: True if GPS has a 2D/3D fix.
         # gps_lat_deg: GPS latitude [deg, +N].
         # gps_lon_deg: GPS longitude [deg, +E].
@@ -241,9 +365,17 @@ def InitCsv(FilePath: str):
             "bno085_activity_class",
 
             "adt7410_temp_C",
-            "ina238_bus_V",
-            "ina238_current_A",
-            "ina238_power_W",
+            "cpu_temp_C",
+            "gpu_temp_C",
+            "nvme_temp_C",
+
+            "ina238_batt_bus_V",
+            "ina238_batt_current_A",
+            "ina238_batt_power_W",
+
+            "ina238_5v_bus_V",
+            "ina238_5v_current_A",
+            "ina238_5v_power_W",
 
             "gps_has_fix",
             "gps_lat_deg",
@@ -372,10 +504,23 @@ def Main():
             # ADT7410 – temperature °C
             AdtTempC = Safe(lambda: Sensors["ADT"].temperature)
 
-            # INA238 – bus voltage, current, power
-            InaBusV = Safe(lambda: Sensors["INA"].bus_voltage)
-            InaCurrentA = Safe(lambda: Sensors["INA"].current)
-            InaPowerW = Safe(lambda: Sensors["INA"].power)
+            # Pi internal temperatures
+            CpuTempC = Safe(GetCpuTempC)
+            GpuTempC = Safe(GetGpuTempC)
+            NvmeTempC = Safe(GetNvmeTempC)
+
+            # INA238 – battery pack side (pre DC-DC)
+            InaBatBusV = Safe(lambda: Sensors["INA_BAT"].bus_voltage)
+            InaBatCurrentA = Safe(lambda: Sensors["INA_BAT"].current)
+            InaBatPowerW = Safe(lambda: Sensors["INA_BAT"].power)
+
+            # INA238 – 5 V bus side (post DC-DC), optional
+            if Sensors["INA_5V"]:
+                Ina5VBusV = Safe(lambda: Sensors["INA_5V"].bus_voltage)
+                Ina5VCurrentA = Safe(lambda: Sensors["INA_5V"].current)
+                Ina5VPowerW = Safe(lambda: Sensors["INA_5V"].power)
+            else:
+                Ina5VBusV = Ina5VCurrentA = Ina5VPowerW = None
 
             # GPS – update and read fields
             GpsHasFix = False
@@ -468,9 +613,17 @@ def Main():
                 ActivityClass,
 
                 AdtTempC,
-                InaBusV,
-                InaCurrentA,
-                InaPowerW,
+                CpuTempC,
+                GpuTempC,
+                NvmeTempC,
+
+                InaBatBusV,
+                InaBatCurrentA,
+                InaBatPowerW,
+
+                Ina5VBusV,
+                Ina5VCurrentA,
+                Ina5VPowerW,
 
                 GpsHasFix,
                 GpsLat,
@@ -488,9 +641,12 @@ def Main():
 
             # Short console summary so you can see things are alive
             print(
-                f"{Timestamp} | Lux(TSL)={TslLux}  Lux(VEML)={VemlLux}  "
+                f"{Timestamp} | "
+                f"Lux(TSL)={TslLux}  Lux(VEML)={VemlLux}  "
                 f"T_BMP={BmpTempC} C  P={BmpPressHpa} hPa  "
-                f"T_ADT={AdtTempC} C  Vbus={InaBusV} V  I={InaCurrentA} A  P={InaPowerW} W  "
+                f"T_ADT={AdtTempC} C  CPU={CpuTempC} C  GPU={GpuTempC} C  NVMe={NvmeTempC} C  "
+                f"Vbat={InaBatBusV} V  Ibat={InaBatCurrentA} A  Pbat={InaBatPowerW} W  "
+                f"V5V={Ina5VBusV} V  I5V={Ina5VCurrentA} A  P5V={Ina5VPowerW} W  "
                 f"Yaw={Yaw} deg"
             )
 
