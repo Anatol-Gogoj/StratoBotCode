@@ -738,6 +738,18 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
     ThermalThread.start()
     LogStatus(StatusLog, f"Thermal watchdog thread started (name={ThermalThread.name}).")
 
+    SensorCsvPath = os.path.join(LogsDir, "sensors.csv")
+    SensorThread = threading.Thread(
+        target=RunSensorPoller,
+        args=(SensorCsvPath, 1.0, StopEvent),  # 1.0 s interval; adjust if needed
+        daemon=True,
+    )
+    SensorThread.start()
+    LogStatus(
+        StatusLog,
+        f"Sensor poller thread started (name={SensorThread.name}, csv={SensorCsvPath}).",
+    )
+
     Cam0StderrLogBase = os.path.join(LogsDir, "cam0_segment")
     Cam1StderrLogBase = os.path.join(LogsDir, "cam1_segment")
 
@@ -818,7 +830,11 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
         LogStatus(StatusLog, "Stopping telemetry logger...")
         TelemetryThread.join(timeout=5.0)
 
+        LogStatus(StatusLog, "Stopping sensor poller...")
+        SensorThread.join(timeout=5.0)
+
         LogStatus(StatusLog, f"Flight recording complete: {FlightDir}")
+
 
 
 # ===========================================================================
@@ -1181,7 +1197,7 @@ def InitCsv(FilePath: str):
     return CsvFile, Writer
 
 
-def RunSensorPoller(CsvPath: str, IntervalSec: float) -> None:
+def RunSensorPoller(CsvPath: str, IntervalSec: float, StopEvent: Optional[threading.Event] = None) -> None:
     Sensors = InitSensors()
     CsvFile, Writer = InitCsv(CsvPath)
 
@@ -1189,6 +1205,9 @@ def RunSensorPoller(CsvPath: str, IntervalSec: float) -> None:
 
     try:
         while True:
+            if StopEvent is not None and StopEvent.is_set():
+                break
+
             TimestampIso = GetIsoTimestamp()
 
             # TSL2591 – lux
@@ -1420,7 +1439,6 @@ def RunSensorPoller(CsvPath: str, IntervalSec: float) -> None:
             Writer.writerow(Row)
             CsvFile.flush()
 
-            # Short console summary so you can see things are alive
             print(
                 f"{TimestampIso} | "
                 f"Lux(TSL)={TslLux}  Lux(VEML)={VemlLux}  "
