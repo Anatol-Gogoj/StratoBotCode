@@ -60,6 +60,7 @@ import adafruit_adt7410
 from adafruit_ina23x import INA23X
 import adafruit_gps
 import serial
+import glob
 
 # ===========================================================================
 # Shared utilities
@@ -138,6 +139,29 @@ def Safe(Callable, Default=None):
         return Callable()
     except Exception:
         return Default
+
+def GetLatestFlightLogsDir(BaseDir: str = "/mnt/nvme") -> Optional[str]:
+    """
+    Find the most recent flight_YYYYMMDD_HHMMSS directory under BaseDir
+    and return its logs/ subdirectory path.
+
+    Returns:
+        str: /mnt/nvme/flight_YYYYMMDD_HHMMSS/logs
+        None: if no flight_* directory exists
+    """
+    if not os.path.isdir(BaseDir):
+        return None
+
+    Pattern = os.path.join(BaseDir, "flight_*")
+    Candidates = [Path for Path in glob.glob(Pattern) if os.path.isdir(Path)]
+    if not Candidates:
+        return None
+
+    # lexicographic max works because of YYYYMMDD_HHMMSS naming
+    LatestFlightDir = sorted(Candidates)[-1]
+    LogsDir = os.path.join(LatestFlightDir, "logs")
+    EnsureDir(LogsDir)
+    return LogsDir
 
 
 # ===========================================================================
@@ -1197,7 +1221,29 @@ def InitCsv(FilePath: str):
     return CsvFile, Writer
 
 
-def RunSensorPoller(CsvPath: str, IntervalSec: float, StopEvent: Optional[threading.Event] = None) -> None:
+def RunSensorPoller(
+    CsvPath: Optional[str],
+    IntervalSec: float,
+    StopEvent: Optional[threading.Event] = None,
+) -> None:
+    """
+    Main sensor logging loop.
+
+    If CsvPath is None, this will find the most recent flight_*/logs directory
+    under /mnt/nvme and write sensors.csv there. This is what "current flight
+    logs" means operationally: the latest flight directory by timestamp.
+    """
+    if CsvPath is None:
+        LogsDir = GetLatestFlightLogsDir("/mnt/nvme")
+        if LogsDir is None:
+            print(
+                "ERROR: No flight_*/ directories found under /mnt/nvme; "
+                "cannot auto-resolve current flight logs."
+            )
+            return
+        CsvPath = os.path.join(LogsDir, "sensors.csv")
+        print(f"Auto-resolved sensor CSV path to {CsvPath}")
+
     Sensors = InitSensors()
     CsvFile, Writer = InitCsv(CsvPath)
 
@@ -1532,8 +1578,11 @@ def ParseArgs() -> argparse.Namespace:
     )
     SensorParser.add_argument(
         "--csv-path",
-        default="/mnt/nvme/sensor_log.csv",
-        help="Output CSV path (default: /mnt/nvme/sensor_log.csv).",
+        default=None,
+        help=(
+            "Output CSV path. If omitted, writes to sensors.csv in the "
+            "most recent flight_*/logs directory under /mnt/nvme."
+        ),
     )
     SensorParser.add_argument(
         "--interval-s",
