@@ -73,7 +73,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
     if [ ! -d "${VENV_DIR}" ]; then
         log "Creating Python venv at ${VENV_DIR}..."
-        sudo -u "${SUPERVISOR_USER}" python3 -m venv "${VENV_DIR}" >>"${LOG_FILE}" 2>&1 || {
+        sudo -u "${SUPERVISOR_USER}" python3 -m venv --system-site-packages "${VENV_DIR}" >>"${LOG_FILE}" 2>&1 || {
             log "ERROR: Failed to create venv."
             UpdateReason="venv_create_failed"
         }
