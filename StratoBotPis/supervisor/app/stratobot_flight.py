@@ -61,6 +61,7 @@ from adafruit_ina23x import INA23X
 import adafruit_gps
 import serial
 import glob
+import adafruit_ssd1306
 
 # ===========================================================================
 # Shared utilities
@@ -177,7 +178,7 @@ EXPECTED_CAN_NODE_IDS = [
     0x200,  # Node 0
     0x201,  # Node 1
     0x202,  # Node 2
-    0x203,  # Node 3
+    0x203,  # Node 3 - RPi Zero 1 W
     0x204,  # Node 4 - RPi Pico 2 W
 ]
 
@@ -187,16 +188,51 @@ EXPECTED_CAN_NODE_IDS = [
 
 MUX_ADDR = 0x70
 
-# Expected devices per channel with possible addresses
+# Expected devices per channel with possible addresses.
+# All sensors are OPTIONAL for preflight; missing / mismatched devices will
+# only generate WARN messages and will NOT abort the flight.
+
 CHANNEL_CONFIG = {
-    0: {"name": "TSL2591", "expected_addrs": [0x29], "required": False},  # Light sensor
-    1: {"name": "BMP390",  "expected_addrs": [0x76, 0x77], "required": True},  # Pressure sensor
-    2: {"name": "VEML7700", "expected_addrs": [0x10], "required": False},  # Light sensor
-    3: {"name": "BNO085",  "expected_addrs": [0x4A, 0x4B], "required": False},  # IMU
-    4: {"name": "ADT7410", "expected_addrs": [0x48, 0x49, 0x4A, 0x4B], "required": True},  # Temp sensor
-    5: {"name": "INA238", "expected_addrs": [0x40], "required": True},  # Voltage/current sensor - Battery-side
-    # Channel 6 INA238 (5V bus) is optional for preflight scan; you can
-    # add it here later if you want to hard-enforce it in the precheck.
+    0: {  # Light sensor (TSL2591)
+        "name": "TSL2591",
+        "expected_addrs": [0x29],
+        "required": False,
+    },
+    1: {  # Pressure + temperature (BMP390)
+        "name": "BMP390",
+        "expected_addrs": [0x76, 0x77],
+        "required": False,
+    },
+    2: {  # Light sensor (VEML7700)
+        "name": "VEML7700",
+        "expected_addrs": [0x10],
+        "required": False,
+    },
+    3: {  # IMU (BNO085)
+        "name": "BNO085",
+        "expected_addrs": [0x4A, 0x4B],
+        "required": False,
+    },
+    4: {  # Board temperature (ADT7410)
+        "name": "ADT7410",
+        "expected_addrs": [0x48, 0x49, 0x4A, 0x4B],
+        "required": False,
+    },
+    5: {  # Battery-side INA238 (pre-DC-DC)
+        "name": "INA238_BATT",
+        "expected_addrs": [0x40],
+        "required": False,
+    },
+    6: {  # 5 V bus INA238 (post-DC-DC)
+        "name": "INA238_5V_BUS",
+        "expected_addrs": [0x40],
+        "required": False,
+    },
+    7: {  # OLED display (SSD1306-style I2C, typical addr 0x3C / 0x3D)
+        "name": "OLED_SSD1306",
+        "expected_addrs": [0x3C, 0x3D],
+        "required": False,
+    },
 }
 
 
@@ -993,13 +1029,14 @@ def InitSensors():
     Tca = adafruit_tca9548a.TCA9548A(I2c, address=0x70)
 
     # Channel assignments:
-    # 0: TSL2591       (lux)
-    # 1: BMP390        (pressure + temperature)
-    # 2: VEML7700      (lux, optional)
-    # 3: BNO085        (IMU)
-    # 4: ADT7410       (board temp near Pi/sensors)
-    # 5: INA238_BATT   (battery pack side, pre DC-DC)
-    # 6: INA238_5V_BUS (regulated 5V bus after DC-DC)
+    # 0: TSL2591        (lux)
+    # 1: BMP390         (pressure + temperature)
+    # 2: VEML7700       (lux, optional)
+    # 3: BNO085         (IMU)
+    # 4: ADT7410        (board temp near Pi/sensors)
+    # 5: INA238_BATT    (battery pack side, pre DC-DC)
+    # 6: INA238_5V_BUS  (regulated 5 V bus after DC-DC, optional)
+    # 7: OLED_SSD1306   (status display, optional)
 
     # TSL2591 light sensor
     Tsl = adafruit_tsl2591.TSL2591(Tca[0])
@@ -1052,12 +1089,25 @@ def InitSensors():
     # Battery pack side (pre DC-DC)
     InaBat = INA23X(Tca[5])
 
-    # 5V bus side (post DC-DC, channel 6 is optional but expected in your setup)
+    # 5V bus side (post DC-DC, channel 6 optional)
     try:
         Ina5V = INA23X(Tca[6])
     except Exception as Exc:
         print(f"WARNING: 5V bus INA238 not found on mux channel 6: {Exc}")
         Ina5V = None
+
+    # OLED display on channel 7 (optional)
+    try:
+        # Typical Adafruit SSD1306 I2C 128x64 uses addr 0x3C; 0x3D on some boards.
+        # You can change addr=0x3D if your board is strapped that way.
+        Oled = adafruit_ssd1306.SSD1306_I2C(128, 64, Tca[7], addr=0x3C)
+        Oled.fill(0)
+        Oled.text("StratoBot", 0, 0, 1)
+        Oled.text("Sensors init", 0, 10, 1)
+        Oled.show()
+    except Exception as Exc:
+        print(f"WARNING: OLED not found on mux channel 7: {Exc}")
+        Oled = None
 
     # GPS on /dev/serial0 (optional)
     try:
@@ -1079,6 +1129,7 @@ def InitSensors():
         "ADT": Adt,
         "INA_BAT": InaBat,
         "INA_5V": Ina5V,
+        "OLED": Oled,
         "GPS": Gps,
     }
 
@@ -1367,6 +1418,30 @@ def RunSensorPoller(
                 Ina5VPowerW = Safe(lambda: Sensors["INA_5V"].power)
             else:
                 Ina5VBusV = Ina5VCurrentA = Ina5VPowerW = None
+
+
+            # --- Optional: update OLED status display ---
+            Oled = Sensors.get("OLED")
+            if Oled is not None:
+                try:
+                    Oled.fill(0)
+                    # Keep text simple; SSD1306 is small.
+                    # Example: show CPU temp and battery voltage.
+                    CpuStr = f"CPU:{CpuTempC:.1f}C" if CpuTempC is not None else "CPU:NA"
+                    VbatStr = (
+                        f"Vbat:{InaBatBusV:.2f}V"
+                        if InaBatBusV is not None
+                        else "Vbat:NA"
+                    )
+                    Oled.text("StratoBot", 0, 0, 1)
+                    Oled.text(CpuStr, 0, 16, 1)
+                    Oled.text(VbatStr, 0, 26, 1)
+                    Oled.show()
+                except Exception as Exc:
+                    print(f"WARNING: OLED update failed: {Exc}")
+                    # Optionally disable further updates:
+                    # Sensors["OLED"] = None
+
 
             # GPS – update and read fields
             GpsHasFix = False
