@@ -18,11 +18,19 @@ sequence:
 
   - type: gpio_high
     pin: 23
-    duration: 2.0
+    duration: 1.0
 
   - type: gpio_low
     pin: 23
-    duration: 0.0
+    duration: 1.0
+
+  - type: gpio_high
+    pin: 24
+    duration: 1.0
+
+  - type: gpio_low
+    pin: 24
+    duration: 1.0
 
   # - type: gpio_high
   #   pin: 24
