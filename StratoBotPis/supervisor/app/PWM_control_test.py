@@ -1,43 +1,47 @@
 #!/usr/bin/env python3
 """
-Hardware PWM test sequence for Raspberry Pi 5 using sysfs + gpiod.
+Hardware PWM test sequence for Raspberry Pi 5 using sysfs + RPi.GPIO (rpi-lgpio backend).
 
 Assumptions:
   - /boot/firmware/config.txt contains:
         dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
-  - This maps:
+
+    This maps:
         pwmchip0 channel 0 -> GPIO 12 (BCM 12)
         pwmchip0 channel 1 -> GPIO 13 (BCM 13)
-  - Run this script as root:
-        sudo /home/admin/stratobot_env/bin/python PWM_control_test.py
+
+Sequence (repeats until Ctrl+C):
+  - BCM 13: hardware PWM 1 kHz, 50% duty for 1 second.
+  - BCM 23: HIGH 2 seconds, then LOW.
+  - BCM 24: HIGH 2 seconds, then LOW.
+  - Stop PWM on BCM 13, wait 2 seconds.
+  - BCM 12: hardware PWM 1 kHz, 50% duty for 1 second.
+  - BCM 27: HIGH 2 seconds, then LOW.
+  - BCM 22: HIGH 2 seconds, then LOW.
+  - Stop PWM on BCM 12.
 """
 
 import os
 import time
 import sys
 
-try:
-    import gpiod
-except ImportError:
-    print("[ERROR] Python gpiod bindings not found.")
-    print("        Install with: sudo apt install -y python3-libgpiod")
-    sys.exit(1)
+import RPi.GPIO as GPIO  # provided by rpi-lgpio on Pi 5
 
 
-PWMChipIndex = 0          # /sys/class/pwm/pwmchip0
-PwmFrequencyHz = 1000     # 1 kHz
-PwmPeriodNs = 1_000_000   # 1 kHz -> 1e6 ns period
-PwmDutyNs = PwmPeriodNs // 2  # 50% duty cycle
+PWM_CHIP_INDEX = 0          # /sys/class/pwm/pwmchip0
+PWM_FREQUENCY_HZ = 1000     # 1 kHz
+PWM_PERIOD_NS = 1_000_000   # 1 kHz -> 1e6 ns period
+PWM_DUTY_NS = PWM_PERIOD_NS // 2  # 50% duty cycle
 
 # Mapping with dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
-PwmChannelGpio13 = 1      # channel 1 -> BCM 13
-PwmChannelGpio12 = 0      # channel 0 -> BCM 12
+PWM_CHANNEL_GPIO13 = 1      # channel 1 -> BCM 13
+PWM_CHANNEL_GPIO12 = 0      # channel 0 -> BCM 12
 
 # Digital GPIO pins (BCM numbers)
-Gpio23 = 23
-Gpio24 = 24
-Gpio27 = 27
-Gpio22 = 22
+GPIO23 = 23
+GPIO24 = 24
+GPIO27 = 27
+GPIO22 = 22
 
 
 class SysfsPwmController:
@@ -64,18 +68,18 @@ class SysfsPwmController:
                 "and that you rebooted."
             )
 
-        self._ExportChannel()
-        self._ConfigureTiming()
+        self._export_channel()
+        self._configure_timing()
 
-    def _Write(self, path, value):
+    def _write(self, path, value):
         with open(path, "w") as f:
             f.write(str(value))
 
-    def _ExportChannel(self):
+    def _export_channel(self):
         if not os.path.isdir(self.channel_path):
             export_path = os.path.join(self.chip_path, "export")
             print(f"[PWM] Exporting channel {self.channel_index} on pwmchip{self.chip_index}")
-            self._Write(export_path, self.channel_index)
+            self._write(export_path, self.channel_index)
             # Wait for kernel to create the directory
             for _ in range(50):
                 if os.path.isdir(self.channel_path):
@@ -87,111 +91,75 @@ class SysfsPwmController:
                     f"on pwmchip{self.chip_index}"
                 )
 
-    def _ConfigureTiming(self):
+    def _configure_timing(self):
         # Always disable before changing timing
         if os.path.exists(self.enabled_path):
-            self._Write(self.enabled_path, 0)
+            self._write(self.enabled_path, 0)
 
         print(
             f"[PWM] Setting period={self.period_ns} ns, duty={self.duty_ns} ns "
             f"on pwmchip{self.chip_index}/pwm{self.channel_index}"
         )
-        self._Write(self.period_path, self.period_ns)
-        self._Write(self.duty_path, self.duty_ns)
+        self._write(self.period_path, self.period_ns)
+        self._write(self.duty_path, self.duty_ns)
 
-    def Start(self):
+    def start(self):
         print(
             f"[PWM] Enabling pwmchip{self.chip_index}/pwm{self.channel_index} "
             f"({self.period_ns} ns, {self.duty_ns} ns)"
         )
-        # Ensure duty is correct in case it was changed
-        self._Write(self.duty_path, self.duty_ns)
-        self._Write(self.enabled_path, 1)
+        self._write(self.duty_path, self.duty_ns)
+        self._write(self.enabled_path, 1)
 
-    def Stop(self):
+    def stop(self):
         print(f"[PWM] Disabling pwmchip{self.chip_index}/pwm{self.channel_index}")
         if os.path.exists(self.enabled_path):
-            self._Write(self.enabled_path, 0)
+            self._write(self.enabled_path, 0)
 
-    def SetDuty(self, duty_ns):
+    def set_duty(self, duty_ns):
         self.duty_ns = int(duty_ns)
         print(
             f"[PWM] Updating duty cycle to {self.duty_ns} ns "
             f"on pwmchip{self.chip_index}/pwm{self.channel_index}"
         )
-        self._Write(self.duty_path, self.duty_ns)
+        self._write(self.duty_path, self.duty_ns)
 
-    def Cleanup(self, unexport=False):
-        self.Stop()
+    def cleanup(self, unexport=False):
+        self.stop()
         if unexport:
             unexport_path = os.path.join(self.chip_path, "unexport")
             print(f"[PWM] Unexporting pwmchip{self.chip_index}/pwm{self.channel_index}")
-            self._Write(unexport_path, self.channel_index)
+            self._write(unexport_path, self.channel_index)
 
 
-class GpioDigitalController:
-    """
-    Simple gpiod wrapper for controlling a list of BCM GPIOs as outputs.
-    Compatible with libgpiod v1 Python bindings.
-    """
-
-    def __init__(self, bcm_pins, chip_path="/dev/gpiochip0"):
-        self.bcm_pins = list(bcm_pins)
-        self.chip = gpiod.Chip(chip_path)
-        self.lines = {}
-
-        for pin in self.bcm_pins:
-            line = self.chip.get_line(pin)
-            line.request(
-                consumer="pwm_control_test",
-                type=gpiod.LINE_REQ_DIR_OUT,
-                default_val=0,
-            )
-            self.lines[pin] = line
-
-    def SetPin(self, bcm_pin, value):
-        if bcm_pin not in self.lines:
-            raise ValueError(f"BCM pin {bcm_pin} not managed by this controller")
-
-        print(f"[GPIO] Setting BCM {bcm_pin} -> {'HIGH' if value else 'LOW'}")
-        self.lines[bcm_pin].set_value(1 if value else 0)
-
-    def Cleanup(self):
-        print("[GPIO] Releasing GPIO lines and driving all low.")
-        for pin, line in self.lines.items():
-            try:
-                line.set_value(0)
-            except OSError:
-                pass
-            try:
-                line.release()
-            except OSError:
-                pass
-        self.chip.close()
+def setup_gpio():
+    print("[INIT] Setting up GPIO (BCM mode) via RPi.GPIO.")
+    GPIO.setmode(GPIO.BCM)
+    for pin in (GPIO23, GPIO24, GPIO27, GPIO22):
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+    print("[INIT] GPIO setup complete.")
 
 
-def MainLoop():
+def main_loop():
     if os.geteuid() != 0:
         print("[ERROR] This script must be run as root.")
         print("        Try: sudo /home/admin/stratobot_env/bin/python PWM_control_test.py")
         sys.exit(1)
 
-    print("[INIT] Initializing GPIO (via gpiod).")
-    gpio = GpioDigitalController([Gpio23, Gpio24, Gpio27, Gpio22])
-    print("[INIT] GPIO initialization complete.")
+    setup_gpio()
 
     print("[INIT] Initializing hardware PWM controllers (sysfs).")
     pwm13 = SysfsPwmController(
-        chip_index=PWMChipIndex,
-        channel_index=PwmChannelGpio13,
-        period_ns=PwmPeriodNs,
-        duty_ns=PwmDutyNs,
+        chip_index=PWM_CHIP_INDEX,
+        channel_index=PWM_CHANNEL_GPIO13,
+        period_ns=PWM_PERIOD_NS,
+        duty_ns=PWM_DUTY_NS,
     )
     pwm12 = SysfsPwmController(
-        chip_index=PWMChipIndex,
-        channel_index=PwmChannelGpio12,
-        period_ns=PwmPeriodNs,
-        duty_ns=PwmDutyNs,
+        chip_index=PWM_CHIP_INDEX,
+        channel_index=PWM_CHANNEL_GPIO12,
+        period_ns=PWM_PERIOD_NS,
+        duty_ns=PWM_DUTY_NS,
     )
     print("[INIT] PWM initialization complete.")
 
@@ -204,46 +172,46 @@ def MainLoop():
 
             # === Phase 1: GPIO 13 PWM ===
             print("[STEP] Starting 1 kHz, 50% duty PWM on BCM 13.")
-            pwm13.Start()
+            pwm13.start()
             time.sleep(1.0)
 
             print("[STEP] Driving BCM 23 HIGH for 2 seconds.")
-            gpio.SetPin(Gpio23, 1)
+            GPIO.output(GPIO23, GPIO.HIGH)
             time.sleep(2.0)
             print("[STEP] Driving BCM 23 LOW.")
-            gpio.SetPin(Gpio23, 0)
+            GPIO.output(GPIO23, GPIO.LOW)
 
             print("[STEP] Driving BCM 24 HIGH for 2 seconds.")
-            gpio.SetPin(Gpio24, 1)
+            GPIO.output(GPIO24, GPIO.HIGH)
             time.sleep(2.0)
             print("[STEP] Driving BCM 24 LOW.")
-            gpio.SetPin(Gpio24, 0)
+            GPIO.output(GPIO24, GPIO.LOW)
 
             print("[STEP] Stopping PWM on BCM 13.")
-            pwm13.Stop()
+            pwm13.stop()
 
             print("[STEP] Waiting 2 seconds before Phase 2.")
             time.sleep(2.0)
 
             # === Phase 2: GPIO 12 PWM ===
             print("[STEP] Starting 1 kHz, 50% duty PWM on BCM 12.")
-            pwm12.Start()
+            pwm12.start()
             time.sleep(1.0)
 
             print("[STEP] Driving BCM 27 HIGH for 2 seconds.")
-            gpio.SetPin(Gpio27, 1)
+            GPIO.output(GPIO27, GPIO.HIGH)
             time.sleep(2.0)
             print("[STEP] Driving BCM 27 LOW.")
-            gpio.SetPin(Gpio27, 0)
+            GPIO.output(GPIO27, GPIO.LOW)
 
             print("[STEP] Driving BCM 22 HIGH for 2 seconds.")
-            gpio.SetPin(Gpio22, 1)
+            GPIO.output(GPIO22, GPIO.HIGH)
             time.sleep(2.0)
             print("[STEP] Driving BCM 22 LOW.")
-            gpio.SetPin(Gpio22, 0)
+            GPIO.output(GPIO22, GPIO.LOW)
 
             print("[STEP] Stopping PWM on BCM 12.")
-            pwm12.Stop()
+            pwm12.stop()
 
             print("[LOOP] Sequence complete, restarting...\n")
 
@@ -254,19 +222,19 @@ def MainLoop():
     finally:
         print("[CLEANUP] Stopping all PWM and resetting GPIO.")
         try:
-            pwm13.Cleanup(unexport=False)
+            pwm13.cleanup(unexport=False)
         except Exception as exc:
             print(f"[CLEANUP] PWM13 cleanup error: {exc}")
         try:
-            pwm12.Cleanup(unexport=False)
+            pwm12.cleanup(unexport=False)
         except Exception as exc:
             print(f"[CLEANUP] PWM12 cleanup error: {exc}")
         try:
-            gpio.Cleanup()
+            GPIO.cleanup()
         except Exception as exc:
             print(f"[CLEANUP] GPIO cleanup error: {exc}")
         print("[CLEANUP] Done.")
-
+        
 
 if __name__ == "__main__":
-    MainLoop()
+    main_loop()
