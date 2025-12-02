@@ -132,37 +132,41 @@ class SysfsPwmController:
 class GpioDigitalController:
     """
     Simple gpiod wrapper for controlling a list of BCM GPIOs as outputs.
+    Compatible with libgpiod v1 Python bindings.
     """
 
-    def __init__(self, bcm_pins):
+    def __init__(self, bcm_pins, chip_path="/dev/gpiochip0"):
         self.bcm_pins = list(bcm_pins)
-        # Pi 5 exposes its 40-pin header as gpiochip0
-        self.chip = gpiod.Chip("/dev/gpiochip0")
-        self.lines = self.chip.get_lines(self.bcm_pins)
-        self.lines.request(
-            consumer="pwm_control_test",
-            type=gpiod.LINE_REQ_DIR_OUT,
-            default_vals=[0] * len(self.bcm_pins),
-        )
+        self.chip = gpiod.Chip(chip_path)
+        self.lines = {}
+
+        for pin in self.bcm_pins:
+            line = self.chip.get_line(pin)
+            line.request(
+                consumer="pwm_control_test",
+                type=gpiod.LINE_REQ_DIR_OUT,
+                default_val=0,
+            )
+            self.lines[pin] = line
 
     def SetPin(self, bcm_pin, value):
-        if bcm_pin not in self.bcm_pins:
+        if bcm_pin not in self.lines:
             raise ValueError(f"BCM pin {bcm_pin} not managed by this controller")
 
-        index = self.bcm_pins.index(bcm_pin)
         print(f"[GPIO] Setting BCM {bcm_pin} -> {'HIGH' if value else 'LOW'}")
-        current_vals = list(self.lines.get_values())
-        current_vals[index] = 1 if value else 0
-        self.lines.set_values(current_vals)
+        self.lines[bcm_pin].set_value(1 if value else 0)
 
     def Cleanup(self):
         print("[GPIO] Releasing GPIO lines and driving all low.")
-        try:
-            self.lines.set_values([0] * len(self.bcm_pins))
-        except OSError:
-            # If request already released, ignore
-            pass
-        self.lines.release()
+        for pin, line in self.lines.items():
+            try:
+                line.set_value(0)
+            except OSError:
+                pass
+            try:
+                line.release()
+            except OSError:
+                pass
         self.chip.close()
 
 
