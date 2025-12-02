@@ -8,9 +8,9 @@ pwm:
 
 sequence:
   # Phase 1: PWM on BCM 13, then 23/24 toggles
-  - type: pwm_start
-    pin: 13
-    duration: 0.0
+  # - type: pwm_start
+  #   pin: 13
+  #   duration: 0.0
 
   - type: pwm_start
     pin: 12
