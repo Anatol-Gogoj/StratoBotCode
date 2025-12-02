@@ -1,152 +1,137 @@
 #!/usr/bin/env python3
 """
-Simple hardware PWM and GPIO sequence for Raspberry Pi 5 (Debian Trixie, RPi OS Lite 64-bit).
+Hardware PWM test for Raspberry Pi 5 using rpi-hardware-pwm and rpi-lgpio.
 
-- BCM 13: Hardware PWM at 1 kHz, 50% duty for 1 second.
-- BCM 23: HIGH for 2 seconds, then LOW.
-- BCM 24: HIGH for 2 seconds, then LOW.
-- Stop PWM on BCM 13.
-- Wait 2 seconds.
-- BCM 19: Hardware PWM at 1 kHz, 50% duty for 1 second.
-- BCM 27: HIGH for 2 seconds, then LOW.
-- BCM 22: HIGH for 2 seconds, then LOW.
-- Stop all PWM.
-
-Sequence repeats until the user cancels with Ctrl+C.
+Sequence:
+- Hardware PWM at 1 kHz, 50% duty on BCM 13 for 1 second
+- BCM 23 HIGH for 2 seconds, then LOW
+- BCM 24 HIGH for 2 seconds, then LOW
+- Stop PWM on BCM 13, wait 2 seconds
+- Hardware PWM at 1 kHz, 50% duty on BCM 19 for 1 second
+- BCM 27 HIGH for 2 seconds, then LOW
+- BCM 22 HIGH for 2 seconds, then LOW
+- Stop PWM on BCM 19
+- Repeat until user cancellation (Ctrl+C)
 """
 
 import time
-import sys
-import os
-
-import pigpio
+from rpi_hardware_pwm import HardwarePWM
+import RPi.GPIO as GPIO  # provided by rpi-lgpio
 
 
-PwmPinOne = 13
-PwmPinTwo = 19
-GpioPinTwentyThree = 23
-GpioPinTwentyFour = 24
-GpioPinTwentySeven = 27
-GpioPinTwentyTwo = 22
+# BCM pin assignments
+PWM_PIN_1 = 13  # hardware PWM via channel 1 on Pi 5
+PWM_PIN_2 = 19  # hardware PWM via channel 3 on Pi 5
 
-PwmFrequencyHz = 1000
-PwmDutyCycleHardware = 500_000  # 50% duty (range is 0–1_000_000)
+GPIO_PIN_1 = 23
+GPIO_PIN_2 = 24
+GPIO_PIN_3 = 27
+GPIO_PIN_4 = 22
 
-
-def InitPigpio():
-    Pi = pigpio.pi()
-    if not Pi.connected:
-        print("pigpiod is not running. Attempting to start it with sudo pigpiod...")
-        OsReturnCode = os.system("sudo pigpiod")
-        if OsReturnCode != 0:
-            print("Failed to start pigpiod (sudo pigpiod returned nonzero). Exiting.")
-            sys.exit(1)
-        time.sleep(0.5)
-        Pi = pigpio.pi()
-        if not Pi.connected:
-            print("Failed to connect to pigpio daemon after starting it. Exiting.")
-            sys.exit(1)
-    return Pi
+PWM_FREQ_HZ = 1000.0
+DUTY_CYCLE = 50.0  # percent
 
 
-def ConfigureGpio(Pi):
-    OutputPins = [
-        GpioPinTwentyThree,
-        GpioPinTwentyFour,
-        GpioPinTwentySeven,
-        GpioPinTwentyTwo,
-    ]
-    for Pin in OutputPins:
-        Pi.set_mode(Pin, pigpio.OUTPUT)
-        Pi.write(Pin, 0)
+def SetupGpio():
+    """Configure GPIO pins for digital output (non-PWM)."""
+    print("[INIT] Setting up GPIO (BCM mode)...")
+    GPIO.setmode(GPIO.BCM)
 
-    # Not strictly required, but keeps intent explicit for hardware PWM pins
-    Pi.set_mode(PwmPinOne, pigpio.OUTPUT)
-    Pi.set_mode(PwmPinTwo, pigpio.OUTPUT)
-    Pi.write(PwmPinOne, 0)
-    Pi.write(PwmPinTwo, 0)
+    for pin in (GPIO_PIN_1, GPIO_PIN_2, GPIO_PIN_3, GPIO_PIN_4):
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+
+    print("[INIT] GPIO setup complete.")
 
 
-def StopAllPwm(Pi):
-    Pi.hardware_PWM(PwmPinOne, 0, 0)
-    Pi.hardware_PWM(PwmPinTwo, 0, 0)
+def MainLoop():
+    """
+    Run the requested sequence in an infinite loop until Ctrl+C.
+    Uses hardware PWM on:
+      - channel 1 -> GPIO13
+      - channel 3 -> GPIO19
+    """
+    print("[INIT] Initializing hardware PWM objects...")
+    # On Pi 5:
+    #   chip=0, channel 1 -> GPIO13
+    #   chip=0, channel 3 -> GPIO19
+    pwm13 = HardwarePWM(pwm_channel=1, hz=PWM_FREQ_HZ, chip=0)
+    pwm19 = HardwarePWM(pwm_channel=3, hz=PWM_FREQ_HZ, chip=0)
 
-
-def Main():
-    Pi = InitPigpio()
-    ConfigureGpio(Pi)
-
-    print("Starting hardware PWM and GPIO sequence. Press Ctrl+C to stop.")
+    print("[INIT] PWM objects created. Entering main loop (Ctrl+C to exit).")
 
     try:
         while True:
-            # Step 1: BCM 13 hardware PWM
-            print("Step 1: Start hardware PWM on BCM 13 at 1 kHz, 50% duty.")
-            Pi.hardware_PWM(PwmPinOne, PwmFrequencyHz, PwmDutyCycleHardware)
+            print("\n=== New cycle start ===")
+
+            # 1) PWM on BCM 13
+            print("[STEP] Starting hardware PWM on BCM 13 at 1 kHz, 50% duty.")
+            pwm13.start(DUTY_CYCLE)
             time.sleep(1.0)
 
-            # Step 2: BCM 23 HIGH for 2 seconds, then LOW
-            print("Step 2: Set BCM 23 HIGH for 2 seconds.")
-            Pi.write(GpioPinTwentyThree, 1)
+            # 2) BCM 23 HIGH 2 s, then LOW
+            print("[STEP] Setting BCM 23 HIGH for 2 seconds.")
+            GPIO.output(GPIO_PIN_1, GPIO.HIGH)
             time.sleep(2.0)
-            Pi.write(GpioPinTwentyThree, 0)
-            print("Step 3: Set BCM 23 LOW.")
+            print("[STEP] Setting BCM 23 LOW.")
+            GPIO.output(GPIO_PIN_1, GPIO.LOW)
 
-            # Step 3: BCM 24 HIGH for 2 seconds, then LOW
-            print("Step 4: Set BCM 24 HIGH for 2 seconds.")
-            Pi.write(GpioPinTwentyFour, 1)
+            # 3) BCM 24 HIGH 2 s, then LOW
+            print("[STEP] Setting BCM 24 HIGH for 2 seconds.")
+            GPIO.output(GPIO_PIN_2, GPIO.HIGH)
             time.sleep(2.0)
-            Pi.write(GpioPinTwentyFour, 0)
-            print("Step 5: Set BCM 24 LOW.")
+            print("[STEP] Setting BCM 24 LOW.")
+            GPIO.output(GPIO_PIN_2, GPIO.LOW)
 
-            # Step 4: Stop PWM on BCM 13
-            print("Step 6: Stop hardware PWM on BCM 13.")
-            Pi.hardware_PWM(PwmPinOne, 0, 0)
+            # 4) Stop PWM on BCM 13
+            print("[STEP] Stopping PWM on BCM 13.")
+            pwm13.stop()
 
-            # Wait 2 seconds
-            print("Step 7: Wait 2 seconds before starting PWM on BCM 19.")
+            # 5) Wait 2 seconds
+            print("[STEP] Waiting 2 seconds before starting PWM on BCM 19.")
             time.sleep(2.0)
 
-            # Step 5: BCM 19 hardware PWM
-            print("Step 8: Start hardware PWM on BCM 19 at 1 kHz, 50% duty.")
-            Pi.hardware_PWM(PwmPinTwo, PwmFrequencyHz, PwmDutyCycleHardware)
+            # 6) PWM on BCM 19
+            print("[STEP] Starting hardware PWM on BCM 19 at 1 kHz, 50% duty.")
+            pwm19.start(DUTY_CYCLE)
             time.sleep(1.0)
 
-            # Step 6: BCM 27 HIGH for 2 seconds, then LOW
-            print("Step 9: Set BCM 27 HIGH for 2 seconds.")
-            Pi.write(GpioPinTwentySeven, 1)
+            # 7) BCM 27 HIGH 2 s, then LOW
+            print("[STEP] Setting BCM 27 HIGH for 2 seconds.")
+            GPIO.output(GPIO_PIN_3, GPIO.HIGH)
             time.sleep(2.0)
-            Pi.write(GpioPinTwentySeven, 0)
-            print("Step 10: Set BCM 27 LOW.")
+            print("[STEP] Setting BCM 27 LOW.")
+            GPIO.output(GPIO_PIN_3, GPIO.LOW)
 
-            # Step 7: BCM 22 HIGH for 2 seconds, then LOW
-            print("Step 11: Set BCM 22 HIGH for 2 seconds.")
-            Pi.write(GpioPinTwentyTwo, 1)
+            # 8) BCM 22 HIGH 2 s, then LOW
+            print("[STEP] Setting BCM 22 HIGH for 2 seconds.")
+            GPIO.output(GPIO_PIN_4, GPIO.HIGH)
             time.sleep(2.0)
-            Pi.write(GpioPinTwentyTwo, 0)
-            print("Step 12: Set BCM 22 LOW.")
+            print("[STEP] Setting BCM 22 LOW.")
+            GPIO.output(GPIO_PIN_4, GPIO.LOW)
 
-            # Step 8: Stop all PWM
-            print("Step 13: Stop all hardware PWM (BCM 13 and BCM 19).")
-            StopAllPwm(Pi)
+            # 9) Stop PWM on BCM 19
+            print("[STEP] Stopping PWM on BCM 19.")
+            pwm19.stop()
 
-            print("Sequence complete. Restarting sequence...\n")
+            print("[CYCLE] Sequence complete. Repeating...")
 
     except KeyboardInterrupt:
-        print("\nUser cancellation detected (Ctrl+C). Stopping sequence and cleaning up...")
-
+        print("\n[EXIT] Ctrl+C received. Cleaning up and exiting.")
     finally:
-        # Ensure everything is off
-        StopAllPwm(Pi)
-        Pi.write(GpioPinTwentyThree, 0)
-        Pi.write(GpioPinTwentyFour, 0)
-        Pi.write(GpioPinTwentySeven, 0)
-        Pi.write(GpioPinTwentyTwo, 0)
-        Pi.write(PwmPinOne, 0)
-        Pi.write(PwmPinTwo, 0)
-        Pi.stop()
-        print("Cleanup complete. Exiting.")
+        # Make sure PWM is stopped and GPIO released
+        try:
+            pwm13.stop()
+        except Exception:
+            pass
+        try:
+            pwm19.stop()
+        except Exception:
+            pass
+
+        GPIO.cleanup()
+        print("[EXIT] GPIO cleaned up. Bye.")
 
 
 if __name__ == "__main__":
-    Main()
+    SetupGpio()
+    MainLoop()
