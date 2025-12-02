@@ -28,21 +28,21 @@ sequence:
     pin: 23
     duration: 1.0
 
-  - type: gpio_high
-    pin: 24
-    duration: 1.0
+  # - type: gpio_high
+  #   pin: 24
+  #   duration: 1.0
 
-  - type: gpio_low
-    pin: 24
-    duration: 1.0
+  # - type: gpio_low
+  #   pin: 24
+  #   duration: 1.0
 
-  - type: gpio_high
-    pin: 22
-    duration: 1.0
+  # - type: gpio_high
+  #   pin: 22
+  #   duration: 1.0
 
-  - type: gpio_low
-    pin: 22
-    duration: 1.0
+  # - type: gpio_low
+  #   pin: 22
+  #   duration: 1.0
 
   - type: gpio_high
     pin: 27
@@ -64,32 +64,8 @@ sequence:
   #   pin: 13
   #   duration: 0.0
 
-  # Wait between phases
+  # Wait between loops
   - type: sleep
     pin: null
     duration: 2.0
 
-  # # Phase 2: PWM on BCM 12, then 27/22 toggles
-  # - type: pwm_start
-  #   pin: 12
-  #   duration: 1.0
-
-  # - type: gpio_high
-  #   pin: 27
-  #   duration: 2.0
-
-  # - type: gpio_low
-  #   pin: 27
-  #   duration: 0.0
-
-  # - type: gpio_high
-  #   pin: 22
-  #   duration: 2.0
-
-  # - type: gpio_low
-  #   pin: 22
-  #   duration: 0.0
-
-  # - type: pwm_stop
-  #   pin: 12
-  #   duration: 0.0
