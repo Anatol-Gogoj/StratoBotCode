@@ -28,14 +28,14 @@ sequence:
   #   pin: 24
   #   duration: 0.0
 
-  - type: pwm_stop
-    pin: 13
-    duration: 0.0
+  # - type: pwm_stop
+  #   pin: 13
+  #   duration: 0.0
 
   # Wait between phases
   - type: sleep
     pin: null
-    duration: 2.0
+    duration: 1.0
 
   # # Phase 2: PWM on BCM 12, then 27/22 toggles
   # - type: pwm_start
