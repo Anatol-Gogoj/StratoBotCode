@@ -137,7 +137,7 @@ class GpioDigitalController:
     def __init__(self, bcm_pins):
         self.bcm_pins = list(bcm_pins)
         # Pi 5 exposes its 40-pin header as gpiochip0
-        self.chip = gpiod.Chip("gpiochip0")
+        self.chip = gpiod.Chip(0)
         self.lines = self.chip.get_lines(self.bcm_pins)
         self.lines.request(
             consumer="pwm_control_test",
