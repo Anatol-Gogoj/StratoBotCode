@@ -20,7 +20,7 @@ WifiPassword = "calmcheese_057"
 
 # Raw URL to the *single* Python file that contains the main app logic
 RemoteAppUrl = (
-    "https://github.com/Anatol-Gogoj/StratoBotCode/blob/main/StratoBotPis/nodes/StratoBotNode04/app/code.py"
+    "https://github.com/Anatol-Gogoj/StratoBotCode/blob/main/StratoBotPis/nodes/StratoBotNode04/app/pico_app.py"
 )
 
 # Where to store the downloaded app on the Pico
