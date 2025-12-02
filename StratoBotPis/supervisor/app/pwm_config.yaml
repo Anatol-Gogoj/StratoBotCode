@@ -10,7 +10,11 @@ sequence:
   # Phase 1: PWM on BCM 13, then 23/24 toggles
   - type: pwm_start
     pin: 13
-    duration: 1.0
+    duration: 0.0
+
+  - type: pwm_start
+    pin: 12
+    duration: 0.0
 
   - type: gpio_high
     pin: 23
@@ -35,7 +39,7 @@ sequence:
   # Wait between phases
   - type: sleep
     pin: null
-    duration: 1.0
+    duration: 2.0
 
   # # Phase 2: PWM on BCM 12, then 27/22 toggles
   # - type: pwm_start
