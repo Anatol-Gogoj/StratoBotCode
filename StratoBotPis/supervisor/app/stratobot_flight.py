@@ -198,9 +198,9 @@ CHANNEL_CONFIG = {
         "expected_addrs": [0x29],
         "required": False,
     },
-    1: {  # Pressure + temperature (BMP390)
-        "name": "BMP390",
-        "expected_addrs": [0x76, 0x77],
+    1: {  # IMU (BNO085)
+        "name": "BNO085",
+        "expected_addrs": [0x4A, 0x4B],
         "required": False,
     },
     2: {  # Light sensor (VEML7700)
@@ -208,9 +208,9 @@ CHANNEL_CONFIG = {
         "expected_addrs": [0x10],
         "required": False,
     },
-    3: {  # IMU (BNO085)
-        "name": "BNO085",
-        "expected_addrs": [0x4A, 0x4B],
+    3: {  # Pressure + temperature (BMP390)
+        "name": "BMP390",
+        "expected_addrs": [0x76, 0x77],
         "required": False,
     },
     4: {  # Board temperature (ADT7410)
@@ -228,7 +228,7 @@ CHANNEL_CONFIG = {
         "expected_addrs": [0x40],
         "required": False,
     },
-    7: {  # OLED display (SSD1306-style I2C, typical addr 0x3C / 0x3D)
+    7: {  # OLED display (SSD1306)
         "name": "OLED_SSD1306",
         "expected_addrs": [0x3C, 0x3D],
         "required": False,
