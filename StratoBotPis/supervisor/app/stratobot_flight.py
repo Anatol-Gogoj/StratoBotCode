@@ -204,7 +204,8 @@ def BroadcastCanStartRecording(FlightDir: str, FlightEpoch: int) -> None:
     per-node directories.
     """
     try:
-        Bus = can.interface.Bus(channel=CAN_CHANNEL, bustype="socketcan")
+        # new
+        Bus = can.Bus(interface="socketcan", channel=CAN_CHANNEL)
     except Exception as Exc:
         print(
             f"[CAN] WARNING: cannot open CAN bus '{CAN_CHANNEL}' "
@@ -828,7 +829,8 @@ def CanPreflightCheck(LogsDir: str, TimeoutSec: float = 8.0) -> bool:
         LogLine(f"Expected node IDs: {', '.join(f'0x{NodeId:03X}' for NodeId in EXPECTED_CAN_NODE_IDS)}")
 
         try:
-            Bus = can.Bus(channel=CAN_CHANNEL, interface="socketcan")
+            # new
+            Bus = can.Bus(interface="socketcan", channel=CAN_CHANNEL)
         except Exception as Exc:
             LogLine(f"ERROR: Failed to open CAN bus '{CAN_CHANNEL}': {Exc}")
             LogLine("PRECHECK_CAN: FAIL (cannot open CAN bus)")
