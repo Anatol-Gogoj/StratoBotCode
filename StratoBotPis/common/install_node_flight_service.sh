@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Adjust these paths if your user / repo layout is different.
 NODE_USER="admin"
 NODE_HOME="/home/${NODE_USER}"
 NODE_APP_DIR="${NODE_HOME}/StratoBotPis/StratoBotPis/nodes"
