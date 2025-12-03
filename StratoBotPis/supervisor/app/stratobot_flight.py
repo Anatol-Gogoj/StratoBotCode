@@ -1043,10 +1043,14 @@ def InitSensors():
     Tsl.gain = adafruit_tsl2591.GAIN_LOW
     Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
 
-    # BMP390 pressure + temperature
-    Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1])
-    Bmp.pressure_oversampling = 8
-    Bmp.temperature_oversampling = 2
+    # BMP390 pressure + temperature (optional on mux channel 1)
+    try:
+        Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1])
+        Bmp.pressure_oversampling = 8
+        Bmp.temperature_oversampling = 2
+    except Exception as Exc:
+        print(f"WARNING: BMP390/BMP3xx not found on mux channel 1: {Exc}")
+        Bmp = None
 
     # VEML7700 light sensor (optional)
     try:
