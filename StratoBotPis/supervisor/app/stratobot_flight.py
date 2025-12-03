@@ -1042,37 +1042,11 @@ def InitSensors():
     Tsl.gain = adafruit_tsl2591.GAIN_LOW
     Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
 
-    # BMP390 pressure + temperature (optional; try 0x77 then 0x76)
-    Bmp = None
-    try:
-        Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1])  # default 0x77
-    except ValueError:
-        try:
-            Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1], address=0x76)
-            print("INFO: BMP3XX found at 0x76 instead of default 0x77 on mux channel 1.")
-        except Exception as Exc:
-            print(f"WARNING: BMP3XX not found on mux channel 1 at 0x77 or 0x76: {Exc}")
-            Bmp = None
-    except Exception as Exc:
-        print(f"WARNING: BMP3XX init error on mux channel 1: {Exc}")
-        Bmp = None
-
-    if Bmp is not None:
-        Bmp.pressure_oversampling = 8
-        Bmp.temperature_oversampling = 2
-
-    # VEML7700 light sensor (optional)
-    try:
-        Veml = adafruit_veml7700.VEML7700(Tca[2])
-    except Exception as Exc:
-        print(f"WARNING: VEML7700 not found on mux channel 2: {Exc}")
-        Veml = None
-
     # BNO085 IMU
     try:
-        Bno = BNO08X_I2C(Tca[3])
+        Bno = BNO08X_I2C(Tca[1])
     except Exception as Exc:
-        print(f"ERROR: BNO085 IMU not found on mux channel 3: {Exc}")
+        print(f"ERROR: BNO085 IMU not found on mux channel 1: {Exc}")
         Bno = None
 
     # Enable BNO085 reports (per-feature try/except so missing features don't kill init)
@@ -1097,6 +1071,32 @@ def InitSensors():
     TryEnable(BNO_REPORT_SHAKE_DETECTOR)               # shake detection
     TryEnable(BNO_REPORT_STABILITY_CLASSIFIER)         # stability classification
     TryEnable(BNO_REPORT_ACTIVITY_CLASSIFIER)          # activity classification
+
+    # VEML7700 light sensor (optional)
+    try:
+        Veml = adafruit_veml7700.VEML7700(Tca[2])
+    except Exception as Exc:
+        print(f"WARNING: VEML7700 not found on mux channel 2: {Exc}")
+        Veml = None
+
+    # BMP390 pressure + temperature (optional; try 0x77 then 0x76)
+    Bmp = None
+    try:
+        Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[3])  # default 0x77
+    except ValueError:
+        try:
+            Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1], address=0x76)
+            print("INFO: BMP3XX found at 0x76 instead of default 0x77 on mux channel 3.")
+        except Exception as Exc:
+            print(f"WARNING: BMP3XX not found on mux channel 3 at 0x77 or 0x76: {Exc}")
+            Bmp = None
+    except Exception as Exc:
+        print(f"WARNING: BMP3XX init error on mux channel 3: {Exc}")
+        Bmp = None
+
+    if Bmp is not None:
+        Bmp.pressure_oversampling = 8
+        Bmp.temperature_oversampling = 2
 
     # ADT7410 board temperature
     Adt = adafruit_adt7410.ADT7410(Tca[4])
