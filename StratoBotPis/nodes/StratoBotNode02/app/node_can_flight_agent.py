@@ -241,8 +241,10 @@ def StartRecordingIfNeeded(State: NodeFlightState, Bus: can.BusABC, FlightEpoch:
         State.CpuLogThread = CpuThread
         CpuThread.start()
 
-        StatusType = 0x11 if AutoStart else 0x10
-        SendStatusFrame(Bus, StatusType, Code=0)
+        if Bus is not None:
+            StatusType = 0x11 if AutoStart else 0x10
+            SendStatusFrame(Bus, StatusType, Code=0)
+
         if AutoStart:
             print("[NODE] Auto-started recording after timeout; status broadcast sent.")
         else:
@@ -264,7 +266,7 @@ def CanReceiverLoop(State: NodeFlightState) -> None:
     - On START_RECORD (0x110), start recording if not already started.
     """
     try:
-        Bus = can.interface.Bus(channel=CAN_CHANNEL, bustype="socketcan")
+        Bus = can.Bus(interface="socketcan", channel=CAN_CHANNEL)
     except Exception as Exc:
         print(f"[NODE] ERROR: Cannot open CAN bus '{CAN_CHANNEL}': {Exc}")
         return
@@ -312,11 +314,13 @@ def AutoStartWatchdogLoop(State: NodeFlightState) -> None:
     If no START_RECORD is heard within AUTO_START_SECONDS from boot, auto-start
     recording anyway.
     """
+    Bus = None
     try:
-        Bus = can.interface.Bus(channel=CAN_CHANNEL, bustype="socketcan")
+        Bus = can.Bus(interface="socketcan", channel=CAN_CHANNEL)
     except Exception as Exc:
         print(f"[NODE] WARNING: Auto-start watchdog cannot open CAN bus: {Exc}")
-        return
+        # Keep Bus=None, but don't return; we'll still auto-start recording without status frames.
+
 
     while not State.StopMainEvent.is_set() and not State.HasStartedRecording:
         Now = time.time()
