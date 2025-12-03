@@ -1029,32 +1029,37 @@ def InitSensors():
     Tca = adafruit_tca9548a.TCA9548A(I2c, address=0x70)
 
     # Channel assignments:
-    # 0: TSL2591        (lux)
-    # 1: BMP390         (pressure + temperature)
-    # 2: VEML7700       (lux, optional)
-    # 3: BNO085         (IMU)
-    # 4: ADT7410        (board temp near Pi/sensors)
-    # 5: INA238_BATT    (battery pack side, pre DC-DC)
-    # 6: INA238_5V_BUS  (regulated 5 V bus after DC-DC, optional)
-    # 7: OLED_SSD1306   (status display, optional)
+    # 0: TSL2591       (lux)
+    # 1: BMP390        (pressure + temperature) [optional]
+    # 2: VEML7700      (lux, optional)
+    # 3: BNO085        (IMU)
+    # 4: ADT7410       (board temp near Pi/sensors)
+    # 5: INA238_BATT   (battery pack side, pre DC-DC)
+    # 6: INA238_5V_BUS (regulated 5V bus after DC-DC)
 
     # TSL2591 light sensor
-    try:
-        Tsl = adafruit_tsl2591.TSL2591(Tca[0])
-        Tsl.gain = adafruit_tsl2591.GAIN_LOW
-        Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
-    except Exception as Exc:
-        print(f"WARNING: TSL2591 not found on mux channel 0: {Exc}")
-        Tsl = None
+    Tsl = adafruit_tsl2591.TSL2591(Tca[0])
+    Tsl.gain = adafruit_tsl2591.GAIN_LOW
+    Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
 
-    # BMP390 pressure + temperature (optional on mux channel 1)
+    # BMP390 pressure + temperature (optional; try 0x77 then 0x76)
+    Bmp = None
     try:
-        Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1])
+        Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1])  # default 0x77
+    except ValueError:
+        try:
+            Bmp = adafruit_bmp3xx.BMP3XX_I2C(Tca[1], address=0x76)
+            print("INFO: BMP3XX found at 0x76 instead of default 0x77 on mux channel 1.")
+        except Exception as Exc:
+            print(f"WARNING: BMP3XX not found on mux channel 1 at 0x77 or 0x76: {Exc}")
+            Bmp = None
+    except Exception as Exc:
+        print(f"WARNING: BMP3XX init error on mux channel 1: {Exc}")
+        Bmp = None
+
+    if Bmp is not None:
         Bmp.pressure_oversampling = 8
         Bmp.temperature_oversampling = 2
-    except Exception as Exc:
-        print(f"WARNING: BMP390/BMP3xx not found on mux channel 1: {Exc}")
-        Bmp = None
 
     # VEML7700 light sensor (optional)
     try:
