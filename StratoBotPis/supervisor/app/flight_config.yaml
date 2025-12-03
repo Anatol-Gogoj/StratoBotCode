@@ -10,6 +10,6 @@ recording:
 pwm:
   enabled: true
   config_file: pwm_config.yaml
-  start_delay_seconds: 20.0
+  start_delay_seconds: 5.0
   start_after_altitude_m: null # Placeholder for now
 
