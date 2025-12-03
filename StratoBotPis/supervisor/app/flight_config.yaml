@@ -5,10 +5,11 @@ recording:
   crit_mc: 90000
   segments: 24
   segment_minutes: 10
-  required_free_gb: 150
+  required_free_gb: 256
 
 pwm:
   enabled: true
   config_file: pwm_config.yaml
-  start_delay_seconds: 60.0
+  start_delay_seconds: 20.0
   start_after_altitude_m: null # Placeholder for now
+
