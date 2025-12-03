@@ -1039,9 +1039,13 @@ def InitSensors():
     # 7: OLED_SSD1306   (status display, optional)
 
     # TSL2591 light sensor
-    Tsl = adafruit_tsl2591.TSL2591(Tca[0])
-    Tsl.gain = adafruit_tsl2591.GAIN_LOW
-    Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
+    try:
+        Tsl = adafruit_tsl2591.TSL2591(Tca[0])
+        Tsl.gain = adafruit_tsl2591.GAIN_LOW
+        Tsl.integration_time = adafruit_tsl2591.INTEGRATIONTIME_200MS
+    except Exception as Exc:
+        print(f"WARNING: TSL2591 not found on mux channel 0: {Exc}")
+        Tsl = None
 
     # BMP390 pressure + temperature (optional on mux channel 1)
     try:
@@ -1060,7 +1064,11 @@ def InitSensors():
         Veml = None
 
     # BNO085 IMU
-    Bno = BNO08X_I2C(Tca[3])
+    try:
+        Bno = BNO08X_I2C(Tca[3])
+    except Exception as Exc:
+        print(f"ERROR: BNO085 IMU not found on mux channel 3: {Exc}")
+        Bno = None
 
     # Enable BNO085 reports (per-feature try/except so missing features don't kill init)
     def TryEnable(Feature):
