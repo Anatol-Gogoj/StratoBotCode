@@ -179,6 +179,7 @@ def GetLatestFlightLogsDir(BaseDir: str = "/mnt/nvme") -> Optional[str]:
 
 CAN_CHANNEL = "can0"
 CAN_PREFLIGHT_REQUEST_ID = 0x100  # Broadcast-ish "preflight" command ID
+CAN_START_RECORD_ID = 0x110  # Broadcast 'start recording' flight command
 
 # Expected node health response IDs (one per Pi Zero 2 W node).
 # Adjust these to match your node ID scheme.
@@ -189,6 +190,48 @@ EXPECTED_CAN_NODE_IDS = [
     0x203,  # Node 3 - RPi Zero 1 W
     0x204,  # Node 4 - RPi Pico 2 W
 ]
+
+
+def BroadcastCanStartRecording(FlightDir: str, FlightEpoch: int) -> None:
+    """
+    Broadcast a CAN 'start recording' command to all nodes.
+
+    Payload layout:
+      Bytes 0-3: FlightEpoch (uint32, big-endian)
+      Bytes 4-7: reserved (currently 0)
+
+    Nodes can use FlightEpoch to derive a local flight label and make
+    per-node directories.
+    """
+    try:
+        Bus = can.interface.Bus(channel=CAN_CHANNEL, bustype="socketcan")
+    except Exception as Exc:
+        print(
+            f"[CAN] WARNING: cannot open CAN bus '{CAN_CHANNEL}' "
+            f"to send START_RECORD: {Exc}"
+        )
+        return
+
+    DataBytes = int(FlightEpoch).to_bytes(4, byteorder="big", signed=False) + b"\x00\x00\x00\x00"
+
+    try:
+        Msg = can.Message(
+            arbitration_id=CAN_START_RECORD_ID,
+            data=DataBytes,
+            is_extended_id=False,
+        )
+        Bus.send(Msg)
+        print(
+            f"[CAN] Sent START_RECORD: ID=0x{CAN_START_RECORD_ID:03X}, "
+            f"Epoch={FlightEpoch}, FlightDir={FlightDir}"
+        )
+    except Exception as Exc:
+        print(f"[CAN] WARNING: failed to send START_RECORD frame: {Exc}")
+    finally:
+        try:
+            Bus.shutdown()
+        except Exception:
+            pass
 
 
 # ===========================================================================
@@ -1153,7 +1196,15 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
 
     print(f"FlightDir={FlightDir}")
 
+    # Tell all CAN nodes to start recording. Use current RTC time as FlightEpoch.
+    FlightEpoch = int(time.time())
+    try:
+        BroadcastCanStartRecording(FlightDir, FlightEpoch)
+    except Exception as Exc:
+        print(f"[CAN] WARNING: BroadcastCanStartRecording failed: {Exc}")
+
     StopEvent = threading.Event()
+
 
     TelemetryThread = threading.Thread(
         target=TelemetryLoggerLoop,
