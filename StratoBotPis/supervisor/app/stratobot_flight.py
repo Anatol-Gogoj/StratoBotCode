@@ -61,7 +61,7 @@ from adafruit_ina23x import INA23X
 import adafruit_gps
 import serial
 import glob
-import adafruit_ssd1306
+from adafruit_ssd1306 import SSD1306_I2C
 
 # ===========================================================================
 # Shared utilities
