@@ -63,6 +63,14 @@ import serial
 import glob
 from adafruit_ssd1306 import SSD1306_I2C
 
+import RPi.GPIO as GPIO  # for PWM / GPIO sequencing
+
+try:
+    import yaml  # for flight + PWM config
+except ImportError:
+    yaml = None
+
+
 # ===========================================================================
 # Shared utilities
 # ===========================================================================
@@ -181,6 +189,369 @@ EXPECTED_CAN_NODE_IDS = [
     0x203,  # Node 3 - RPi Zero 1 W
     0x204,  # Node 4 - RPi Pico 2 W
 ]
+
+
+# ===========================================================================
+# PWM sysfs helpers (from PWM_control_test.py)
+# ===========================================================================
+
+PwmChipIndex = 0  # /sys/class/pwm/pwmchip0
+
+# BCM pin numbers that are hardware PWM via the dtoverlay
+PwmPinTwelve = 12  # pwmchip0 channel 0
+PwmPinThirteen = 13  # pwmchip0 channel 1
+
+PwmChannelForPin = {
+    PwmPinTwelve: 0,
+    PwmPinThirteen: 1,
+}
+
+
+class SysfsPwmController:
+    """
+    Simple wrapper around /sys/class/pwm for a single PWM channel on a given chip.
+    """
+
+    def __init__(self, chipIndex, channelIndex, periodNs, dutyNs):
+        self.chipIndex = chipIndex
+        self.channelIndex = channelIndex
+        self.periodNs = int(periodNs)
+        self.dutyNs = int(dutyNs)
+
+        self.chipPath = f"/sys/class/pwm/pwmchip{self.chipIndex}"
+        self.channelPath = os.path.join(self.chipPath, f"pwm{self.channelIndex}")
+        self.enabledPath = os.path.join(self.channelPath, "enable")
+        self.periodPath = os.path.join(self.channelPath, "period")
+        self.dutyPath = os.path.join(self.channelPath, "duty_cycle")
+
+        if not os.path.isdir(self.chipPath):
+            raise RuntimeError(
+                f"PWM chip directory '{self.chipPath}' not found. "
+                "Check that dtoverlay=pwm-2chan is in /boot/firmware/config.txt "
+                "and that you rebooted."
+            )
+
+        self._ExportChannel()
+        self._ConfigureTiming()
+
+    def _Write(self, path, value):
+        with open(path, "w") as f:
+            f.write(str(value))
+
+    def _ExportChannel(self):
+        if not os.path.isdir(self.channelPath):
+            exportPath = os.path.join(self.chipPath, "export")
+            print(
+                f"[PWM] Exporting channel {self.channelIndex} "
+                f"on pwmchip{self.chipIndex}"
+            )
+            self._Write(exportPath, self.channelIndex)
+            # Wait for kernel to create the directory
+            for _ in range(50):
+                if os.path.isdir(self.channelPath):
+                    break
+                time.sleep(0.02)
+            if not os.path.isdir(self.channelPath):
+                raise RuntimeError(
+                    f"Failed to export PWM channel {self.channelIndex} "
+                    f"on pwmchip{self.chipIndex}"
+                )
+
+    def _ConfigureTiming(self):
+        # Always disable before changing timing
+        if os.path.exists(self.enabledPath):
+            self._Write(self.enabledPath, 0)
+
+        print(
+            f"[PWM] Setting period={self.periodNs} ns, duty={self.dutyNs} ns "
+            f"on pwmchip{self.chipIndex}/pwm{self.channelIndex}"
+        )
+        self._Write(self.periodPath, self.periodNs)
+        self._Write(self.dutyPath, self.dutyNs)
+
+    def Start(self):
+        print(
+            f"[PWM] Enabling pwmchip{self.chipIndex}/pwm{self.channelIndex} "
+            f"({self.periodNs} ns, {self.dutyNs} ns)"
+        )
+        self._Write(self.dutyPath, self.dutyNs)
+        self._Write(self.enabledPath, 1)
+
+    def Stop(self):
+        print(f"[PWM] Disabling pwmchip{self.chipIndex}/pwm{self.channelIndex}")
+        if os.path.exists(self.enabledPath):
+            self._Write(self.enabledPath, 0)
+
+    def SetDuty(self, dutyNs):
+        self.dutyNs = int(dutyNs)
+        print(
+            f"[PWM] Updating duty cycle to {self.dutyNs} ns "
+            f"on pwmchip{self.chipIndex}/pwm{self.channelIndex}"
+        )
+        self._Write(self.dutyPath, self.dutyNs)
+
+    def Cleanup(self, unexport=False):
+        self.Stop()
+        if unexport:
+            unexportPath = os.path.join(self.chipPath, "unexport")
+            print(
+                f"[PWM] Unexporting channel {self.channelIndex} "
+                f"on pwmchip{self.chipIndex}"
+            )
+            self._Write(unexportPath, self.channelIndex)
+
+
+def LoadPwmConfig(ConfigPath):
+    """
+    Load the PWM YAML config (same structure as PWM_control_test.py):
+
+    pwm:
+      frequency_hz: 1000.0
+      pins:
+        "13":
+          duty_percent: 50.0
+        "12":
+          duty_percent: 50.0
+
+    sequence:
+      - type: pwm_start
+        duration: 1.0
+      - type: sleep
+        duration: 5.0
+      - type: pwm_stop
+        duration: 0.5
+      - type: gpio_high
+        pin: 23
+        duration: 1.0
+      - type: gpio_low
+        pin: 23
+        duration: 1.0
+    """
+    if yaml is None:
+        raise RuntimeError("PyYAML is not available; cannot load PWM config.")
+
+    if not os.path.isfile(ConfigPath):
+        raise FileNotFoundError(f"Config file not found: {ConfigPath}")
+
+    with open(ConfigPath, "r", encoding="utf-8") as File:
+        Data = yaml.safe_load(File) or {}
+
+    PwmCfg = Data.get("pwm", {})
+    SeqCfg = Data.get("sequence", [])
+
+    FreqHz = float(PwmCfg.get("frequency_hz", 1000.0))
+    FreqHz = max(1.0, FreqHz)  # avoid 0 or negative
+
+    PeriodNs = int(1_000_000_000 / FreqHz)
+
+    PinCfg = PwmCfg.get("pins", {})
+
+    Duty13Percent = float(
+        PinCfg.get(str(PwmPinThirteen), {}).get("duty_percent", 50.0)
+    )
+    Duty12Percent = float(
+        PinCfg.get(str(PwmPinTwelve), {}).get("duty_percent", 50.0)
+    )
+
+    Duty13Percent = max(0.0, min(100.0, Duty13Percent))
+    Duty12Percent = max(0.0, min(100.0, Duty12Percent))
+
+    Duty13Ns = int(PeriodNs * Duty13Percent / 100.0)
+    Duty12Ns = int(PeriodNs * Duty12Percent / 100.0)
+
+    Steps = []
+    for Raw in SeqCfg:
+        if not isinstance(Raw, dict):
+            print(f"[PWM] WARN: Skipping non-dict step in config: {Raw}")
+            continue
+        StepType = str(Raw.get("type", "")).strip()
+        if not StepType:
+            print(f"[PWM] WARN: Step missing 'type', skipping: {Raw}")
+            continue
+
+        Pin = Raw.get("pin", None)
+        if Pin is not None:
+            Pin = int(Pin)
+
+        Duration = float(Raw.get("duration", 0.0))
+
+        Steps.append(
+            {
+                "type": StepType,
+                "pin": Pin,
+                "duration": Duration,
+            }
+        )
+
+    Cfg = {
+        "frequency_hz": FreqHz,
+        "period_ns": PeriodNs,
+        "duty13_percent": Duty13Percent,
+        "duty12_percent": Duty12Percent,
+        "duty13_ns": Duty13Ns,
+        "duty12_ns": Duty12Ns,
+        "steps": Steps,
+    }
+
+    return Cfg
+
+
+def PwmSetupGpio(GpioPins):
+    print("[PWM] Setting up GPIO (BCM mode) via RPi.GPIO for PWM sequence.")
+    GPIO.setmode(GPIO.BCM)
+    UniquePins = sorted(set(GpioPins))
+    for Pin in UniquePins:
+        # Avoid setting PWM pins as plain outputs unless user explicitly uses them
+        if Pin in PwmChannelForPin:
+            print(
+                f"[PWM] BCM {Pin} is a PWM-capable pin; not configuring as plain GPIO output."
+            )
+            continue
+        print(f"[PWM] Configuring BCM {Pin} as output, initial LOW.")
+        GPIO.setup(Pin, GPIO.OUT, initial=GPIO.LOW)
+    print("[PWM] GPIO setup complete.")
+
+
+def RunPwmSequenceFromConfig(
+    ConfigPath: str,
+    StopEvent: threading.Event,
+    StartDelaySec: float = 0.0,
+    AltitudeTriggerM: float = None,
+) -> None:
+    """
+    Background PWM sequencer used by the 'launch' subcommand.
+
+    - Loads pwm_config.yaml (or similar)
+    - Optionally waits StartDelaySec before starting
+    - Ignores AltitudeTriggerM for now (placeholder for future GPS/pressure logic)
+    - Loops through the configured sequence until StopEvent is set
+    """
+    print(f"[PWM] Launching PWM thread with config: {ConfigPath}")
+
+    if yaml is None:
+        print("[PWM] ERROR: PyYAML not available; skipping PWM sequence.")
+        return
+
+    try:
+        Cfg = LoadPwmConfig(ConfigPath)
+    except Exception as Exc:
+        print(f"[PWM] ERROR: Failed to load PWM config: {Exc}")
+        return
+
+    FreqHz = Cfg["frequency_hz"]
+    PeriodNs = Cfg["period_ns"]
+    Duty13Ns = Cfg["duty13_ns"]
+    Duty12Ns = Cfg["duty12_ns"]
+    Steps = Cfg["steps"]
+
+    if StartDelaySec > 0.0:
+        print(f"[PWM] Waiting {StartDelaySec:.1f} s before starting sequence.")
+        Elapsed = 0.0
+        Slice = 0.1
+        while Elapsed < StartDelaySec and not StopEvent.is_set():
+            time.sleep(min(Slice, StartDelaySec - Elapsed))
+            Elapsed += Slice
+
+        if StopEvent.is_set():
+            print("[PWM] StopEvent set during start delay; exiting PWM thread.")
+            return
+
+    if AltitudeTriggerM is not None:
+        print(
+            "[PWM] NOTE: altitude-based start is configured but not yet implemented. "
+            "Ignoring altitude trigger and starting based on time only."
+        )
+
+    print(
+        f"[PWM] Using configuration: frequency={FreqHz:.2f} Hz, "
+        f"period={PeriodNs} ns, duty13={Duty13Ns} ns, duty12={Duty12Ns} ns, "
+        f"steps={len(Steps)}"
+    )
+
+    Controllers = {}
+    try:
+        Controllers["pwm13"] = SysfsPwmController(
+            PwmChipIndex,
+            PwmChannelForPin[PwmPinThirteen],
+            PeriodNs,
+            Duty13Ns,
+        )
+        Controllers["pwm12"] = SysfsPwmController(
+            PwmChipIndex,
+            PwmChannelForPin[PwmPinTwelve],
+            PeriodNs,
+            Duty12Ns,
+        )
+    except Exception as Exc:
+        print(f"[PWM] ERROR: Failed to initialize PWM controllers: {Exc}")
+        return
+
+    GpioPins = [
+        Step["pin"]
+        for Step in Steps
+        if Step.get("pin") is not None
+        and Step.get("type") in ("gpio_high", "gpio_low")
+    ]
+    if GpioPins:
+        try:
+            PwmSetupGpio(GpioPins)
+        except Exception as Exc:
+            print(f"[PWM] WARNING: Failed to configure GPIO pins: {Exc}")
+
+    try:
+        print("[PWM] Entering sequence loop; StopEvent will terminate this thread.")
+        while not StopEvent.is_set():
+            for Step in Steps:
+                if StopEvent.is_set():
+                    break
+
+                StepType = Step.get("type")
+                Pin = Step.get("pin")
+                Duration = float(Step.get("duration", 0.0))
+
+                if StepType == "pwm_start":
+                    print("[PWM] Step: pwm_start")
+                    Controllers["pwm13"].Start()
+                    Controllers["pwm12"].Start()
+
+                elif StepType == "pwm_stop":
+                    print("[PWM] Step: pwm_stop")
+                    Controllers["pwm13"].Stop()
+                    Controllers["pwm12"].Stop()
+
+                elif StepType == "gpio_high" and Pin is not None:
+                    print(f"[PWM] Step: gpio_high on BCM {Pin}")
+                    GPIO.output(Pin, GPIO.HIGH)
+
+                elif StepType == "gpio_low" and Pin is not None:
+                    print(f"[PWM] Step: gpio_low on BCM {Pin}")
+                    GPIO.output(Pin, GPIO.LOW)
+
+                elif StepType == "sleep":
+                    if Duration > 0.0:
+                        print(f"[PWM] Step: sleep {Duration:.3f} s")
+                        Remaining = Duration
+                        Slice = 0.1
+                        while Remaining > 0.0 and not StopEvent.is_set():
+                            ThisSlice = min(Slice, Remaining)
+                            time.sleep(ThisSlice)
+                            Remaining -= ThisSlice
+                else:
+                    print(f"[PWM] WARN: Unknown step type '{StepType}', skipping.")
+
+    finally:
+        print("[PWM] Cleaning up PWM and GPIO.")
+        for Ctrl in Controllers.values():
+            try:
+                Ctrl.Cleanup(unexport=False)
+            except Exception as Exc:
+                print(f"[PWM] WARNING: PWM controller cleanup failed: {Exc}")
+
+        try:
+            GPIO.cleanup()
+        except Exception:
+            pass
+
 
 # ===========================================================================
 # I2C sensor preflight via TCA/PCA9548A mux
@@ -897,6 +1268,134 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
 
         LogStatus(StatusLog, f"Flight recording complete: {FlightDir}")
 
+
+def LaunchFullStack(ConfigPath: str) -> None:
+    """
+    Full-stack 'launch' sequence:
+
+      1) Run preflight (GO / NO-GO printed; always continues).
+      2) Start segmented recording + telemetry + thermal watchdog.
+      3) Run PWM sequence from a YAML config in a background thread.
+
+    Flight config YAML example (flight_config.yaml):
+
+      recording:
+        base_dir: /mnt/nvme
+        nvme_dev: /dev/nvme0n1
+        warn_mc: 80000
+        crit_mc: 90000
+        segments: 24
+        segment_minutes: 10
+        required_free_gb: 150
+
+      pwm:
+        enabled: true
+        config_file: pwm_config.yaml
+        start_delay_seconds: 60.0
+        start_after_altitude_m: null  # placeholder, not yet implemented
+    """
+    ScriptDir = os.path.dirname(os.path.abspath(__file__))
+
+    if not os.path.isabs(ConfigPath):
+        ResolvedConfigPath = os.path.join(ScriptDir, ConfigPath)
+    else:
+        ResolvedConfigPath = ConfigPath
+
+    print("=== StratoBot LAUNCH sequence ===")
+    print(f"[LAUNCH] Using flight config YAML: {ResolvedConfigPath}")
+
+    if yaml is None:
+        print(
+            "[LAUNCH] ERROR: PyYAML is not installed; install it in stratobot_env "
+            "to use the 'launch' command."
+        )
+        raise SystemExit(1)
+
+    if not os.path.isfile(ResolvedConfigPath):
+        print(f"[LAUNCH] ERROR: Config file not found: {ResolvedConfigPath}")
+        raise SystemExit(1)
+
+    with open(ResolvedConfigPath, "r", encoding="utf-8") as File:
+        FlightCfg = yaml.safe_load(File) or {}
+
+    RecCfg = FlightCfg.get("recording", {})
+    BaseDir = RecCfg.get("base_dir", "/mnt/nvme")
+    NvmeDev = RecCfg.get("nvme_dev", "/dev/nvme0n1")
+    WarnMilliC = int(RecCfg.get("warn_mc", 80000))
+    CritMilliC = int(RecCfg.get("crit_mc", 90000))
+    TotalSegments = int(RecCfg.get("segments", 24))
+    SegmentMinutes = int(RecCfg.get("segment_minutes", 10))
+    RequiredFreeGb = int(RecCfg.get("required_free_gb", 150))
+
+    PwmSection = FlightCfg.get("pwm", {})
+    PwmEnabled = bool(PwmSection.get("enabled", True))
+    PwmConfigRel = PwmSection.get("config_file", "pwm_config.yaml")
+    if not os.path.isabs(PwmConfigRel):
+        PwmConfigPath = os.path.join(ScriptDir, PwmConfigRel)
+    else:
+        PwmConfigPath = PwmConfigRel
+    PwmStartDelaySec = float(PwmSection.get("start_delay_seconds", 0.0))
+    PwmStartAltM = PwmSection.get("start_after_altitude_m", None)
+
+    print("[LAUNCH] Step 1/3: Running preflight.")
+    PreflightOk = True
+    try:
+        RunPreflightCheck(BaseDir=BaseDir, RequiredFreeGb=RequiredFreeGb)
+    except SystemExit as Exc:
+        PreflightOk = False
+        Code = getattr(Exc, "code", 1)
+        print(f"[LAUNCH] Preflight exited with status {Code}.")
+
+    if PreflightOk:
+        print("[LAUNCH] PRECHECK: GO (preflight completed without fatal errors).")
+    else:
+        print("[LAUNCH] PRECHECK: NO-GO (preflight reported errors).")
+        print(
+            "[LAUNCH] Continuing anyway per 'launch' semantics; "
+            "review preflight logs before an actual flight."
+        )
+
+    PwmStopEvent = threading.Event()
+    PwmThread = None
+
+    if PwmEnabled:
+        print("[LAUNCH] PWM subsystem is ENABLED in config.")
+        if os.geteuid() != 0:
+            print(
+                "[LAUNCH] WARNING: launch is not running as root. "
+                "PWM sysfs control will be skipped."
+            )
+        else:
+            print(
+                "[LAUNCH] Spawning PWM thread; it will respect time-delay and "
+                "placeholder altitude trigger."
+            )
+            PwmThread = threading.Thread(
+                target=RunPwmSequenceFromConfig,
+                args=(PwmConfigPath, PwmStopEvent, PwmStartDelaySec, PwmStartAltM),
+                daemon=True,
+            )
+            PwmThread.start()
+    else:
+        print("[LAUNCH] PWM subsystem DISABLED in config; skipping PWM control.")
+
+    print("[LAUNCH] Step 2/3: Starting segmented recording + telemetry + thermal watchdog.")
+    try:
+        StartFlightRecording(
+            BaseDir=BaseDir,
+            NvmeDev=NvmeDev,
+            WarnMilliC=WarnMilliC,
+            CritMilliC=CritMilliC,
+            TotalSegments=TotalSegments,
+            SegmentMinutes=SegmentMinutes,
+        )
+    finally:
+        print("[LAUNCH] Recording finished; signaling PWM thread to stop.")
+        PwmStopEvent.set()
+        if PwmThread is not None:
+            PwmThread.join(timeout=5.0)
+
+    print("[LAUNCH] Full launch sequence COMPLETE.")
 
 
 # ===========================================================================
@@ -1683,6 +2182,18 @@ def ParseArgs() -> argparse.Namespace:
         help="Polling interval in seconds (default: 1.0).",
     )
 
+    # launch (full stack)
+    LaunchParser = Subparsers.add_parser(
+        "launch",
+        help="Preflight + segmented record + PWM using a flight config YAML.",
+    )
+    LaunchParser.add_argument(
+        "--config",
+        default="flight_config.yaml",
+        help="Flight config YAML path (default: flight_config.yaml in script directory).",
+    )
+
+
     return Parser.parse_args()
 
 
@@ -1705,6 +2216,8 @@ def Main() -> None:
             CsvPath=Args.csv_path,
             IntervalSec=Args.interval_s,
         )
+    elif Args.Command == "launch":
+        LaunchFullStack(ConfigPath=Args.config)
     else:
         raise SystemExit(f"Unknown command: {Args.Command}")
 
