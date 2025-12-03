@@ -4,7 +4,7 @@ set -euo pipefail
 # Adjust these paths if your user / repo layout is different.
 NODE_USER="admin"
 NODE_HOME="/home/${NODE_USER}"
-NODE_APP_DIR="${NODE_HOME}/StratoBotPis/StratoBotPis/node"
+NODE_APP_DIR="${NODE_HOME}/StratoBotPis/StratoBotPis/nodes"
 NODE_SCRIPT="${NODE_APP_DIR}/node_can_flight_agent.py"
 
 SERVICE_NAME="stratobot_node_flight_agent"
