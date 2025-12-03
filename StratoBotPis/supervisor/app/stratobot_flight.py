@@ -1098,9 +1098,7 @@ def InitSensors():
 
     # OLED display on channel 7 (optional)
     try:
-        # Typical Adafruit SSD1306 I2C 128x64 uses addr 0x3C; 0x3D on some boards.
-        # You can change addr=0x3D if your board is strapped that way.
-        Oled = adafruit_ssd1306.SSD1306_I2C(128, 64, Tca[7], addr=0x3C)
+        Oled = SSD1306_I2C(128, 64, Tca[7], addr=0x3C)
         Oled.fill(0)
         Oled.text("StratoBot", 0, 0, 1)
         Oled.text("Sensors init", 0, 10, 1)
