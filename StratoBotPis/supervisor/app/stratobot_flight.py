@@ -799,6 +799,7 @@ def SensorMuxScan(LogsDir: str) -> bool:
 
 # ===========================================================================
 # CAN preflight
+# TODO: Deprecated; no more CAN in system.
 # ===========================================================================
 
 def CanPreflightCheck(LogsDir: str, TimeoutSec: float = 8.0) -> bool:
@@ -1264,7 +1265,7 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "rpicam-vid",
                         "--camera", "0",
                         "--width", "2592", "--height", "1944",
-                        "--framerate", "12",
+                        "--framerate", "5",
                         "--codec", "h264",
                         "--profile", "high",
                         "--level", "4.2",
@@ -1284,7 +1285,7 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "rpicam-vid",
                         "--camera", "1",
                         "--width", "4608", "--height", "2592",
-                        "--framerate", "15",
+                        "--framerate", "5",
                         "--codec", "h264",
                         "--profile", "high",
                         "--level", "5.1",
