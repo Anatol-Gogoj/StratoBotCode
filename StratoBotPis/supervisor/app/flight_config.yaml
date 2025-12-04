@@ -3,7 +3,7 @@ recording:
   nvme_dev: /dev/nvme0n1
   warn_mc: 80000
   crit_mc: 90000
-  segments: 24
+  segments: 32
   segment_minutes: 10
   required_free_gb: 256
 
