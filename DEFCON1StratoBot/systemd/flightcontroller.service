@@ -1,7 +1,7 @@
 [Unit]
 Description=Flight Controller (camera, PWM, MOSFET, BME logger)
-After=multi-user.target
-Wants=multi-user.target
+Requires=pigpiod.service
+After=pigpiod.service
 
 [Service]
 Type=simple
