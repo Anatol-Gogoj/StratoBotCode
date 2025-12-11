@@ -13,6 +13,8 @@ FlightController.py
     video_XXXXX.h264 -> rpicam-vid video segments.
 
 Test on Raspberry Pi OS Trixie 32-bit Lite + Pi Zero W + OV5647 camera.
+
+Updated: use pigpio hardware PWM instead of RPi.GPIO software PWM.
 """
 
 import csv
@@ -27,6 +29,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
 import RPi.GPIO as GPIO
+import pigpio  # Hardware PWM
 
 # =========================
 # === USER CONFIG BLOCK ===
@@ -48,20 +51,21 @@ SegmentMinutes = 10.0    # length of each segment in minutes
 # Use rpicam-vid (Trixie/libcamera stack)
 RpicamVidPath = "rpicam-vid"
 
-# PWM configuration for two channels.
-# NOTE: These use RPi.GPIO software PWM. For very high frequencies, consider hardware PWM.
+# PWM configuration for channels.
+# Now implemented with pigpio.hardware_PWM (0–1_000_000 duty range).
 PwmChannelConfigs: List[Dict[str, Any]] = [
-    {
-        "Name": "Pwm0",
-        "GpioPin": 12,       # BCM pin number
-        "FrequencyHz": 1000, # Hz
-        "DutyCyclePercent": 50.0,
-    },
+    # Example of a second channel if needed:
+    # {
+    #     "Name": "Pwm0",
+    #     "GpioPin": 12,
+    #     "FrequencyHz": 1000,
+    #     "DutyCyclePercent": 50.0,
+    # },
     {
         "Name": "Pwm1",
-        "GpioPin": 13,       # BCM pin number
-        "FrequencyHz": 500,  # Hz
-        "DutyCyclePercent": 25.0,
+        "GpioPin": 13,        # BCM pin number, same as before
+        "FrequencyHz": 10e3,  # 10 kHz
+        "DutyCyclePercent": 50.0,
     },
 ]
 
@@ -69,10 +73,9 @@ PwmChannelConfigs: List[Dict[str, Any]] = [
 # Each MOSFET has a pattern of (DurationSeconds, State) that loops forever.
 # State = 1 -> GPIO.HIGH, 0 -> GPIO.LOW
 MosfetConfigs: List[Dict[str, Any]] = [
-    # Example: x seconds ON, y seconds OFF, repeat
     {
         "Name": "MosfetA",
-        "GpioPin": 5,  # BCM pin
+        "GpioPin": 5,  # BCM pin (same as SINGLE_MOSFET_PIN in the other script)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
             {"DurationSeconds": 5, "State": 0},
@@ -80,7 +83,7 @@ MosfetConfigs: List[Dict[str, Any]] = [
     },
     {
         "Name": "MosfetB",
-        "GpioPin": 6,
+        "GpioPin": 6,  # BCM pin (same as GRIPPER_MOSFET_PIN)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
             {"DurationSeconds": 5, "State": 0},
@@ -106,6 +109,9 @@ MainLoopDtSeconds = 0.25
 StopRequested = False
 GpuTempWarningLogged = False
 BmeInitWarningLogged = False
+
+# Global pigpio handle
+Pi = None
 
 
 def HandleSignal(Signum, Frame):
@@ -236,19 +242,33 @@ class BmeReader:
 
 
 class PwmChannel:
-    def __init__(self, Name: str, GpioPin: int, FrequencyHz: float, DutyCyclePercent: float):
+    """
+    Hardware PWM channel using pigpio.hardware_PWM.
+
+    Note:
+      - DutyCyclePercent is 0–100, mapped to 0–1_000_000.
+      - FrequencyHz should be within pigpio's supported range.
+    """
+
+    def __init__(self, Name: str, GpioPin: int, FrequencyHz: float, DutyCyclePercent: float, PiHandle: pigpio.pi):
         self.Name = Name
         self.GpioPin = GpioPin
-        self.FrequencyHz = FrequencyHz
-        self.DutyCyclePercent = DutyCyclePercent
-        self.Pwm = None
+        self.FrequencyHz = float(FrequencyHz)
+        self.DutyCyclePercent = float(DutyCyclePercent)
+        self.Pi = PiHandle
 
     def Initialize(self):
+        # GPIO mode still BCM via RPi.GPIO; pigpio will handle PWM on the same pin.
         GPIO.setup(self.GpioPin, GPIO.OUT)
-        self.Pwm = GPIO.PWM(self.GpioPin, self.FrequencyHz)
-        self.Pwm.start(self.DutyCyclePercent)
+
+        DutyFraction = max(0.0, min(100.0, self.DutyCyclePercent)) / 100.0
+        DutyMillion = int(DutyFraction * 1_000_000)
+
+        self.Pi.set_mode(self.GpioPin, pigpio.OUTPUT)
+        self.Pi.hardware_PWM(self.GpioPin, int(self.FrequencyHz), DutyMillion)
+
         logging.info(
-            "PWM %s started on GPIO %d at %.1f Hz, %.1f%% duty.",
+            "PWM %s started (hardware PWM) on GPIO %d at %.1f Hz, %.1f%% duty.",
             self.Name,
             self.GpioPin,
             self.FrequencyHz,
@@ -256,9 +276,12 @@ class PwmChannel:
         )
 
     def Stop(self):
-        if self.Pwm is not None:
-            self.Pwm.stop()
-            logging.info("PWM %s stopped.", self.Name)
+        # Disable PWM by setting frequency to 0
+        try:
+            self.Pi.hardware_PWM(self.GpioPin, 0, 0)
+            logging.info("PWM %s stopped (hardware PWM disabled).", self.Name)
+        except Exception as E:
+            logging.warning("Error stopping PWM %s on GPIO %d: %s", self.Name, self.GpioPin, E)
 
 
 class MosfetController:
@@ -324,7 +347,7 @@ def BuildRpicamCommand(FlightDir: pathlib.Path) -> List[str]:
         "--framerate", str(VideoFramerate),
         "--codec", "h264",
         "--bitrate", str(BitrateBitsPerSecond),
-        "-t", str(MissionSeconds * 1000),          # <<< ms, no "s"
+        "-t", str(MissionSeconds * 1000),          # ms
         "--segment", str(SegmentSeconds * 1000),   # ms
         "-o", str(VideoPattern),
         "--inline",
@@ -333,7 +356,6 @@ def BuildRpicamCommand(FlightDir: pathlib.Path) -> List[str]:
 
     logging.info("rpicam-vid command: %s", " ".join(Command))
     return Command
-
 
 
 def StartRpicamRecording(FlightDir: pathlib.Path) -> subprocess.Popen:
@@ -352,8 +374,17 @@ def StartRpicamRecording(FlightDir: pathlib.Path) -> subprocess.Popen:
 
 
 def InitializeGpioHardware() -> (List[PwmChannel], List[MosfetController]):
+    global Pi
+
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
+
+    # Initialize pigpio connection
+    if Pi is None:
+        Pi = pigpio.pi()
+        if not Pi.connected:
+            logging.error("Could not connect to pigpio daemon. Is pigpiod running?")
+            raise RuntimeError("pigpio daemon not available")
 
     PwmChannels: List[PwmChannel] = []
     for Cfg in PwmChannelConfigs:
@@ -362,6 +393,7 @@ def InitializeGpioHardware() -> (List[PwmChannel], List[MosfetController]):
             GpioPin=Cfg["GpioPin"],
             FrequencyHz=Cfg["FrequencyHz"],
             DutyCyclePercent=Cfg["DutyCyclePercent"],
+            PiHandle=Pi,
         )
         Channel.Initialize()
         PwmChannels.append(Channel)
@@ -409,6 +441,8 @@ def InitializeTelemetryCsv(FlightDir: pathlib.Path, PwmChannels: List[PwmChannel
 
 
 def Main():
+    global Pi
+
     FlightDir = CreateFlightDirectory()
     LogPath = SetupLogging(FlightDir)
     logging.info("Flight directory: %s", FlightDir)
@@ -544,6 +578,15 @@ def Main():
         # GPIO cleanup
         GPIO.cleanup()
         logging.info("GPIO cleaned up.")
+
+        # Stop pigpio connection
+        try:
+            if Pi is not None:
+                Pi.stop()
+                logging.info("pigpio connection closed.")
+        except Exception as E:
+            logging.warning("Error stopping pigpio: %s", E)
+
         logging.info("FlightController shutdown complete.")
 
 
