@@ -91,8 +91,9 @@ MosfetConfigs: List[Dict[str, Any]] = [
     },
 ]
 
-# BME sensor configuration (assumes BME280 on I2C bus 1, address 0x76)
-BmeI2cAddress = 0x76
+# BME sensor configuration (assumes BME280 on I2C bus 1, address 0x76 or 0x40)
+# BmeI2cAddress = 0x76
+BmeI2cAddress = 0x40
 
 # Telemetry logging interval (seconds)
 TelemetryPeriodSeconds = 1.0
@@ -476,8 +477,11 @@ def Main():
     Bme = BmeReader(BmeI2cAddress)
     TelemetryCsvPath = InitializeTelemetryCsv(FlightDir, PwmChannels, Mosfets)
 
-    RpicamProcess = StartRpicamRecording(FlightDir)
-
+    try:
+        RpicamProcess = StartRpicamRecording(FlightDir)
+    except Exception as E:
+        logging.error("Failed to start rpicam-vid: %s", E)
+        
     MissionSeconds = MissionHours * 3600.0
     SegmentSeconds = SegmentMinutes * 60.0
 
