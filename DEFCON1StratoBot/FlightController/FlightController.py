@@ -4,17 +4,15 @@ FlightController.py
 
 - Creates a unique flight directory on each boot.
 - Starts rpicam-vid to record 1080p30 video for a fixed mission time, segmented.
-- Sets up two PWM channels with configurable duty cycles and frequencies.
-- Drives MOSFETs according to configurable timing patterns (loops forever).
+- Uses pigpio hardware PWM for a single PWM channel.
+- Drives MOSFETs and PWM according to a global repeating timing sequence.
 - Logs BME sensor (BME280-style), CPU temp, GPU temp once per second.
 - Writes:
     FlightLog.log    -> text log with INFO / WARNING / ERROR and loop indices.
     Telemetry.csv    -> per-second telemetry (temps, PWM, MOSFET states, segment index).
-    video_XXXXX.h264 -> rpicam-vid video segments.
+    video_XXXXX.h264 -> rpicam-vid video segments (if camera present).
 
-Test on Raspberry Pi OS Trixie 32-bit Lite + Pi Zero W + OV5647 camera.
-
-Updated: use pigpio hardware PWM instead of RPi.GPIO software PWM.
+Tested conceptually for Raspberry Pi OS Trixie + Pi 5 + OV5647 camera.
 """
 
 import csv
@@ -54,52 +52,62 @@ RpicamVidPath = "rpicam-vid"
 # PWM configuration for channels.
 # Now implemented with pigpio.hardware_PWM (0–1_000_000 duty range).
 PwmChannelConfigs: List[Dict[str, Any]] = [
-    # Example of a second channel if needed:
-    # {
-    #     "Name": "Pwm0",
-    #     "GpioPin": 12,
-    #     "FrequencyHz": 1000,
-    #     "DutyCyclePercent": 50.0,
-    # },
     {
         "Name": "Pwm1",
         "GpioPin": 13,        # BCM pin number
         "FrequencyHz": 10e3,  # 10 kHz
-        "DutyCyclePercent": 50.0,
+        "DutyCyclePercent": 50.0,  # initial duty; will be overridden by sequence
     },
 ]
 
-# MOSFET timing configuration.
-# Each MOSFET has a pattern of (DurationSeconds, State) that loops forever.
-# State = 1 -> GPIO.HIGH, 0 -> GPIO.LOW
+# MOSFET pin configuration.
+# The patterns in MosfetConfigs are no longer used directly for timing, but
+# pins and names are still used for logging and state control.
 MosfetConfigs: List[Dict[str, Any]] = [
     {
         "Name": "MosfetA",
         "GpioPin": 5,  # BCM pin (SINGLE_MOSFET_PIN)
-        "Pattern": [
-            {"DurationSeconds": 3, "State": 1},
-            {"DurationSeconds": 10, "State": 0},
-        ],
+        "Pattern": [],  # unused
     },
     {
         "Name": "MosfetB",
         "GpioPin": 6,  # BCM pin (GRIPPER_MOSFET_PIN)
-        "Pattern": [
-            {"DurationSeconds": 3, "State": 1},
-            {"DurationSeconds": 10, "State": 0},
-        ],
+        "Pattern": [],  # unused
     },
 ]
 
-# BME sensor configuration (assumes BME280 on I2C bus 1, address 0x76 or 0x40)
-# BmeI2cAddress = 0x76
+# BME sensor configuration (tries preferred address and then 0x76 and 0x40)
+# This is treated as a "hint" and will be tried first.
 BmeI2cAddress = 0x40
 
 # Telemetry logging interval (seconds)
 TelemetryPeriodSeconds = 1.0
 
-# Main loop timestep (seconds) - smaller allows finer MOSFET timing resolution.
+# Main loop timestep (seconds)
 MainLoopDtSeconds = 0.25
+
+# Global PWM + MOSFET sequence (repeats forever).
+# Each step: DurationSeconds, PwmDutyPercent, SingleState, GripperState
+PwmMosfetSequence: List[Dict[str, Any]] = [
+    # 1) 3 s: PWM 50%, Gripper HIGH, Single LOW
+    {"DurationSeconds": 3.0, "PwmDutyPercent": 50.0, "SingleState": 0, "GripperState": 1},
+    # 2) 3 s: PWM 0%, Gripper LOW, Single LOW
+    {"DurationSeconds": 3.0, "PwmDutyPercent": 0.0, "SingleState": 0, "GripperState": 0},
+    # 3) 1 s: PWM 100%, Single HIGH, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 1, "GripperState": 0},
+    # 4) 1 s: PWM 100%, Single LOW, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 0, "GripperState": 0},
+    # 5) 1 s: PWM 100%, Single HIGH, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 1, "GripperState": 0},
+    # 6) 1 s: PWM 100%, Single LOW, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 0, "GripperState": 0},
+    # 7) 1 s: PWM 100%, Single HIGH, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 1, "GripperState": 0},
+    # 8) 1 s: PWM 100%, Single LOW, Gripper LOW
+    {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 0, "GripperState": 0},
+    # 9) 10 s: PWM 0%, both MOSFETs LOW
+    {"DurationSeconds": 10.0, "PwmDutyPercent": 0.0, "SingleState": 0, "GripperState": 0},
+]
 
 # =========================
 # === END CONFIG BLOCK  ===
@@ -270,8 +278,11 @@ class BmeReader:
             H = float(self.Bme.humidity)             # %RH
             return (T, P, H)
         except Exception as E:
-            logging.warning("Error reading BME280 at 0x%02X: %s",
-                            self.Address if self.Address is not None else -1, E)
+            logging.warning(
+                "Error reading BME280 at 0x%02X: %s",
+                self.Address if self.Address is not None else 0,
+                E,
+            )
             return (None, None, None)
 
 
@@ -288,10 +299,9 @@ class PwmChannel:
         self.Name = Name
         self.GpioPin = GpioPin
         self.FrequencyHz = float(FrequencyHz)
-        self.BaseDutyCyclePercent = float(DutyCyclePercent)  # <- store original "default"
+        self.BaseDutyCyclePercent = float(DutyCyclePercent)  # initial "config"
         self.DutyCyclePercent = float(DutyCyclePercent)      # current effective duty
         self.Pi = PiHandle
-
 
     def Initialize(self):
         # GPIO mode still BCM via RPi.GPIO; pigpio will handle PWM on the same pin.
@@ -319,68 +329,53 @@ class PwmChannel:
         except Exception as E:
             logging.warning("Error stopping PWM %s on GPIO %d: %s", self.Name, self.GpioPin, E)
 
-    def SetDutyPercent(self, DutyPercent):
-        DutyPercent = max(0.0, min(100.0, DutyPercent))
+    def SetDutyPercent(self, DutyPercent: float):
+        DutyPercent = max(0.0, min(100.0, float(DutyPercent)))
         DutyMillion = int((DutyPercent / 100.0) * 1_000_000)
         self.Pi.hardware_PWM(self.GpioPin, int(self.FrequencyHz), DutyMillion)
-        self.DutyCyclePercent = DutyPercent  # track current duty
+        self.DutyCyclePercent = DutyPercent
+        logging.debug(
+            "PWM %s duty set to %.1f%% on GPIO %d.",
+            self.Name,
+            self.DutyCyclePercent,
+            self.GpioPin,
+        )
 
-    def SetDutyByMosfetState(self, SingleOn: bool, GripperOn: bool):
-        # Priority: SINGLE overrides GRIPPER
-        if GripperOn:
-            self.SetDutyPercent(60.0)
-        elif SingleOn:
-            self.SetDutyPercent(100.0)
-        else:
-            self.SetDutyPercent(0.0)
 
 class MosfetController:
     """
-    Controls a MOSFET GPIO based on a repeating pattern of (DurationSeconds, State).
+    Controls a MOSFET GPIO, with externally managed state.
     """
 
     def __init__(self, Name: str, GpioPin: int, Pattern: List[Dict[str, Any]]):
         self.Name = Name
         self.GpioPin = GpioPin
-        self.Pattern = Pattern
-        self.CurrentIndex = 0
-        self.TimeInCurrentState = 0.0
+        self.Pattern = Pattern  # unused now
+        self.CurrentState = 0   # 0=LOW, 1=HIGH
 
     def Initialize(self):
         GPIO.setup(self.GpioPin, GPIO.OUT)
-        InitialState = GPIO.HIGH if self.Pattern[0]["State"] else GPIO.LOW
-        GPIO.output(self.GpioPin, InitialState)
+        GPIO.output(self.GpioPin, GPIO.LOW)
+        self.CurrentState = 0
         logging.info(
-            "MOSFET %s initialized on GPIO %d. Initial state: %s for %.1f s.",
+            "MOSFET %s initialized on GPIO %d. Initial state: LOW.",
             self.Name,
             self.GpioPin,
-            "HIGH" if self.Pattern[0]["State"] else "LOW",
-            self.Pattern[0]["DurationSeconds"],
         )
 
-    def Update(self, Dt: float):
-        """
-        Advance pattern by Dt seconds; switch state when DurationSeconds is exceeded.
-        """
-        self.TimeInCurrentState += Dt
-        CurrentStep = self.Pattern[self.CurrentIndex]
-        if self.TimeInCurrentState >= CurrentStep["DurationSeconds"]:
-            # Advance to next step
-            self.TimeInCurrentState = 0.0
-            self.CurrentIndex = (self.CurrentIndex + 1) % len(self.Pattern)
-            NewStep = self.Pattern[self.CurrentIndex]
-            NewState = GPIO.HIGH if NewStep["State"] else GPIO.LOW
-            GPIO.output(self.GpioPin, NewState)
-            logging.info(
-                "MOSFET %s switched to state %s for next %.1f s.",
-                self.Name,
-                "HIGH" if NewStep["State"] else "LOW",
-                NewStep["DurationSeconds"],
-            )
+    def SetState(self, State: int):
+        """Set logical state (1=HIGH, 0=LOW) and update GPIO."""
+        self.CurrentState = 1 if State else 0
+        GPIO.output(self.GpioPin, GPIO.HIGH if self.CurrentState else GPIO.LOW)
+        logging.debug(
+            "MOSFET %s set to %s.",
+            self.Name,
+            "HIGH" if self.CurrentState else "LOW",
+        )
 
     def GetCurrentState(self) -> int:
-        """Return current logical state (1=HIGH, 0=LOW) based on pattern index."""
-        return 1 if self.Pattern[self.CurrentIndex]["State"] else 0
+        """Return current logical state (1=HIGH, 0=LOW)."""
+        return self.CurrentState
 
 
 def BuildRpicamCommand(FlightDir: pathlib.Path) -> List[str]:
@@ -490,6 +485,38 @@ def InitializeTelemetryCsv(FlightDir: pathlib.Path, PwmChannels: List[PwmChannel
     return CsvPath
 
 
+def ApplySequenceStep(
+    StepIndex: int,
+    PwmChannels: List[PwmChannel],
+    SingleMosfet: MosfetController,
+    GripperMosfet: MosfetController,
+):
+    """
+    Apply PWM duty and MOSFET states for the given step index.
+    """
+    Step = PwmMosfetSequence[StepIndex]
+    PwmDuty = Step["PwmDutyPercent"]
+    SingleState = Step["SingleState"]
+    GripperState = Step["GripperState"]
+
+    # Apply PWM (same duty to all configured channels)
+    for Ch in PwmChannels:
+        Ch.SetDutyPercent(PwmDuty)
+
+    # Apply MOSFET states
+    SingleMosfet.SetState(SingleState)
+    GripperMosfet.SetState(GripperState)
+
+    logging.info(
+        "Sequence step %d: duration=%.2f s, PWM=%.1f%%, Single=%s, Gripper=%s",
+        StepIndex,
+        Step["DurationSeconds"],
+        PwmDuty,
+        "HIGH" if SingleState else "LOW",
+        "HIGH" if GripperState else "LOW",
+    )
+
+
 def Main():
     global Pi
 
@@ -510,13 +537,22 @@ def Main():
     Bme = BmeReader(BmeI2cAddress)
     TelemetryCsvPath = InitializeTelemetryCsv(FlightDir, PwmChannels, Mosfets)
 
-    RpicamProcess = None
+    # Identify Single/Gripper MOSFET controllers by name
+    try:
+        SingleMosfet = next(m for m in Mosfets if m.Name == "MosfetA")
+        GripperMosfet = next(m for m in Mosfets if m.Name == "MosfetB")
+    except StopIteration:
+        logging.error("MosfetA and/or MosfetB not found in Mosfets list; aborting.")
+        return
+
+    # Try to start rpicam; continue mission if it fails
+    RpicamProcess: Optional[subprocess.Popen] = None
     try:
         RpicamProcess = StartRpicamRecording(FlightDir)
     except Exception as E:
         logging.error("Failed to start rpicam-vid: %s", E)
         RpicamProcess = None
-        
+
     MissionSeconds = MissionHours * 3600.0
     SegmentSeconds = SegmentMinutes * 60.0
 
@@ -524,6 +560,11 @@ def Main():
     LastTelemetryTime = StartTime
     LoopCounter = 0
     LastSegmentIndex = -1  # for logging when our own estimate increments
+
+    # Initialize the PWM+MOSFET sequence
+    SequenceIndex = 0
+    TimeInCurrentStep = 0.0
+    ApplySequenceStep(SequenceIndex, PwmChannels, SingleMosfet, GripperMosfet)
 
     try:
         with open(TelemetryCsvPath, "a", newline="") as CsvFile:
@@ -540,20 +581,13 @@ def Main():
 
                 Dt = MainLoopDtSeconds
 
-                # Update MOSFET patterns
-                for Mf in Mosfets:
-                    Mf.Update(Dt)
-
-                # Determine MOSFET states
-                SingleState = next(m for m in Mosfets if m.Name == "MosfetA").GetCurrentState()
-                GripperState = next(m for m in Mosfets if m.Name == "MosfetB").GetCurrentState()
-
-                # Apply PWM overrides to the PWM channel(s)
-                for Ch in PwmChannels:
-                    Ch.SetDutyByMosfetState(
-                        SingleOn = (SingleState == 1),
-                        GripperOn = (GripperState == 1)
-                    )
+                # Advance sequence timing
+                TimeInCurrentStep += Dt
+                CurrentStep = PwmMosfetSequence[SequenceIndex]
+                if TimeInCurrentStep >= CurrentStep["DurationSeconds"]:
+                    TimeInCurrentStep = 0.0
+                    SequenceIndex = (SequenceIndex + 1) % len(PwmMosfetSequence)
+                    ApplySequenceStep(SequenceIndex, PwmChannels, SingleMosfet, GripperMosfet)
 
                 # Check rpicam-vid process status (if it was started)
                 if RpicamProcess is not None:
@@ -566,7 +600,6 @@ def Main():
                             ReturnCode,
                         )
                         RpicamProcess = None
-
 
                 # Once per TelemetryPeriodSeconds, log telemetry
                 if Now - LastTelemetryTime >= TelemetryPeriodSeconds:
@@ -589,7 +622,8 @@ def Main():
                         LastSegmentIndex = EstimatedSegmentIndex
 
                     logging.info(
-                        "Loop %d | Uptime %.1f s | CPU=%.2f C | GPU=%s C | BME T=%.2f C P=%.2f hPa H=%.2f %%",
+                        "Loop %d | Uptime %.1f s | CPU=%.2f C | GPU=%s C | "
+                        "BME T=%.2f C P=%.2f hPa H=%.2f %%",
                         LoopCounter,
                         Uptime,
                         CpuTempC if CpuTempC is not None else float("nan"),
