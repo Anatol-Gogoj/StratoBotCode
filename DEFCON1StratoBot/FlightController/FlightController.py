@@ -63,7 +63,7 @@ PwmChannelConfigs: List[Dict[str, Any]] = [
     # },
     {
         "Name": "Pwm1",
-        "GpioPin": 13,        # BCM pin number, same as before
+        "GpioPin": 13,        # BCM pin number
         "FrequencyHz": 10e3,  # 10 kHz
         "DutyCyclePercent": 50.0,
     },
@@ -75,7 +75,7 @@ PwmChannelConfigs: List[Dict[str, Any]] = [
 MosfetConfigs: List[Dict[str, Any]] = [
     {
         "Name": "MosfetA",
-        "GpioPin": 5,  # BCM pin (same as SINGLE_MOSFET_PIN in the other script)
+        "GpioPin": 5,  # BCM pin (SINGLE_MOSFET_PIN)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
             {"DurationSeconds": 5, "State": 0},
@@ -83,7 +83,7 @@ MosfetConfigs: List[Dict[str, Any]] = [
     },
     {
         "Name": "MosfetB",
-        "GpioPin": 6,  # BCM pin (same as GRIPPER_MOSFET_PIN)
+        "GpioPin": 6,  # BCM pin (GRIPPER_MOSFET_PIN)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
             {"DurationSeconds": 5, "State": 0},
@@ -254,8 +254,10 @@ class PwmChannel:
         self.Name = Name
         self.GpioPin = GpioPin
         self.FrequencyHz = float(FrequencyHz)
-        self.DutyCyclePercent = float(DutyCyclePercent)
+        self.BaseDutyCyclePercent = float(DutyCyclePercent)  # <- store original "default"
+        self.DutyCyclePercent = float(DutyCyclePercent)      # current effective duty
         self.Pi = PiHandle
+
 
     def Initialize(self):
         # GPIO mode still BCM via RPi.GPIO; pigpio will handle PWM on the same pin.
@@ -283,6 +285,20 @@ class PwmChannel:
         except Exception as E:
             logging.warning("Error stopping PWM %s on GPIO %d: %s", self.Name, self.GpioPin, E)
 
+    def SetDutyPercent(self, DutyPercent):
+        DutyPercent = max(0.0, min(100.0, DutyPercent))
+        DutyMillion = int((DutyPercent / 100.0) * 1_000_000)
+        self.Pi.hardware_PWM(self.GpioPin, int(self.FrequencyHz), DutyMillion)
+        self.DutyCyclePercent = DutyPercent  # track current duty
+
+    def SetDutyByMosfetState(self, SingleOn: bool, GripperOn: bool):
+        # Priority: SINGLE overrides GRIPPER
+        if GripperOn:
+            self.SetDutyPercent(60.0)
+        elif SingleOn:
+            self.SetDutyPercent(100.0)
+        else:
+            self.SetDutyPercent(0.0)
 
 class MosfetController:
     """
@@ -488,6 +504,17 @@ def Main():
                 # Update MOSFET patterns
                 for Mf in Mosfets:
                     Mf.Update(Dt)
+
+                # Determine MOSFET states
+                SingleState = next(m for m in Mosfets if m.Name == "MosfetA").GetCurrentState()
+                GripperState = next(m for m in Mosfets if m.Name == "MosfetB").GetCurrentState()
+
+                # Apply PWM overrides to the PWM channel(s)
+                for Ch in PwmChannels:
+                    Ch.SetDutyByMosfetState(
+                        SingleOn = (SingleState == 1),
+                        GripperOn = (GripperState == 1)
+                    )
 
                 # Check rpicam-vid process status
                 if RpicamProcess.poll() is not None:
