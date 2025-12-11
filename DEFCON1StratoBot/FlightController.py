@@ -16,7 +16,6 @@ Test on Raspberry Pi OS Trixie 32-bit Lite + Pi Zero W + OV5647 camera.
 """
 
 import csv
-import datetime
 import logging
 import os
 import pathlib
