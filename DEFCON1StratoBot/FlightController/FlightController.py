@@ -311,41 +311,29 @@ class MosfetController:
 
 
 def BuildRpicamCommand(FlightDir: pathlib.Path) -> List[str]:
-    """
-    Build rpicam-vid command for 1080p30 H.264 recording with segmentation.
-    """
     MissionSeconds = int(MissionHours * 3600.0)
     SegmentSeconds = int(SegmentMinutes * 60.0)
 
-    # Example output pattern: flight_video_00001.h264, etc.
     VideoPattern = FlightDir / "video_%05d.h264"
-
-    BitrateBitsPerSecond = int(VideoBitrateMbps * 1_000_000)
+    BitrateBitsPerSecond = int(VideoBitrateMbps * 1e6)
 
     Command = [
         RpicamVidPath,
-        "--width",
-        str(VideoWidth),
-        "--height",
-        str(VideoHeight),
-        "--framerate",
-        str(VideoFramerate),
-        "--codec",
-        "h264",
-        "--bitrate",
-        str(BitrateBitsPerSecond),
-        "-t",
-        f"{MissionSeconds}s",
-        "--segment",
-        str(SegmentSeconds * 1000),  # ms
-        "-o",
-        str(VideoPattern),
+        "--width", str(VideoWidth),
+        "--height", str(VideoHeight),
+        "--framerate", str(VideoFramerate),
+        "--codec", "h264",
+        "--bitrate", str(BitrateBitsPerSecond),
+        "-t", str(MissionSeconds * 1000),          # <<< ms, no "s"
+        "--segment", str(SegmentSeconds * 1000),   # ms
+        "-o", str(VideoPattern),
         "--inline",
         "--nopreview",
     ]
 
     logging.info("rpicam-vid command: %s", " ".join(Command))
     return Command
+
 
 
 def StartRpicamRecording(FlightDir: pathlib.Path) -> subprocess.Popen:
