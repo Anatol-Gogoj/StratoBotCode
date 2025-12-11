@@ -69,21 +69,21 @@ PwmChannelConfigs: List[Dict[str, Any]] = [
 # Each MOSFET has a pattern of (DurationSeconds, State) that loops forever.
 # State = 1 -> GPIO.HIGH, 0 -> GPIO.LOW
 MosfetConfigs: List[Dict[str, Any]] = [
-    # Example: 10 seconds ON, 20 seconds OFF, repeat
+    # Example: x seconds ON, y seconds OFF, repeat
     {
         "Name": "MosfetA",
         "GpioPin": 5,  # BCM pin
         "Pattern": [
-            {"DurationSeconds": 10.0, "State": 1},
-            {"DurationSeconds": 20.0, "State": 0},
+            {"DurationSeconds": 3, "State": 1},
+            {"DurationSeconds": 5, "State": 0},
         ],
     },
-    # Example: always ON (single state)
     {
         "Name": "MosfetB",
         "GpioPin": 6,
         "Pattern": [
-            {"DurationSeconds": 999999.0, "State": 1},
+            {"DurationSeconds": 3, "State": 1},
+            {"DurationSeconds": 5, "State": 0},
         ],
     },
 ]
