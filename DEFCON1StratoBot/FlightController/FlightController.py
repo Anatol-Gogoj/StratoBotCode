@@ -89,10 +89,12 @@ MainLoopDtSeconds = 0.25
 # Global PWM + MOSFET sequence (repeats forever).
 # Each step: DurationSeconds, PwmDutyPercent, SingleState, GripperState
 PwmMosfetSequence: List[Dict[str, Any]] = [
-    # 1) 3 s: PWM 50%, Gripper HIGH, Single LOW
-    {"DurationSeconds": 3.0, "PwmDutyPercent": 50.0, "SingleState": 0, "GripperState": 1},
-    # 2) 3 s: PWM 0%, Gripper LOW, Single LOW
-    {"DurationSeconds": 3.0, "PwmDutyPercent": 0.0, "SingleState": 0, "GripperState": 0},
+    # 0) 10 s: PWM 60%, both MOSFETs LOW, prime HV side
+    {"DurationSeconds": 10.0, "PwmDutyPercent": 60.0, "SingleState": 0, "GripperState": 0},
+    # 1) 3 s: PWM 60%, Gripper HIGH, Single LOW
+    {"DurationSeconds": 3.0, "PwmDutyPercent": 60.0, "SingleState": 0, "GripperState": 1},
+    # 2) 3 s: PWM 60%, Gripper LOW, Single LOW
+    {"DurationSeconds": 3.0, "PwmDutyPercent": 60.0, "SingleState": 0, "GripperState": 0},
     # 3) 1 s: PWM 100%, Single HIGH, Gripper LOW
     {"DurationSeconds": 1.0, "PwmDutyPercent": 100.0, "SingleState": 1, "GripperState": 0},
     # 4) 1 s: PWM 100%, Single LOW, Gripper LOW
