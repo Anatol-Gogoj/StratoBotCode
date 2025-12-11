@@ -1,0 +1,17 @@
+[Unit]
+Description=Flight Controller (camera, PWM, MOSFET, BME logger)
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/FlightController
+ExecStart=/usr/bin/python3 /home/admin/FlightController/FlightController.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
