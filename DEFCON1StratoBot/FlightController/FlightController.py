@@ -39,10 +39,10 @@ BaseFlightDirectory = pathlib.Path("/home/admin/flights")
 MissionHours = 8.0
 
 # Video configuration
-VideoWidth = 2592
-VideoHeight = 1944
-VideoFramerate = 15  # fps
-VideoBitrateMbps = 20  # Mbit/s H.264
+VideoWidth = 1640
+VideoHeight = 1232
+VideoFramerate = 30  # fps
+VideoBitrateMbps = 16.0  # Mbit/s H.264
 SegmentMinutes = 10.0    # length of each segment in minutes
 
 # Use rpicam-vid (Trixie/libcamera stack)
