@@ -194,10 +194,12 @@ def ReadGpuTempC() -> Optional[float]:
 
 
 class BmeReader:
-    """Wrapper around Adafruit BME280 library with graceful failure."""
+    """Wrapper around Adafruit BME280 library with graceful failure and dual-address scan."""
 
-    def __init__(self, Address: int):
-        self.Address = Address
+    def __init__(self, Address: Optional[int]):
+        # Address is treated as a preferred hint; we also scan 0x76 and 0x40.
+        self.PreferredAddress = Address
+        self.Address = None
         self.Bme = None
         self.Available = False
         self._InitSensor()
@@ -210,19 +212,49 @@ class BmeReader:
             import adafruit_bme280
 
             I2c = busio.I2C(board.SCL, board.SDA)
-            self.Bme = adafruit_bme280.Adafruit_BME280_I2C(
-                I2c, address=self.Address
-            )
-            self.Available = True
-            logging.info(
-                "BME280 initialized at I2C address 0x%02X.", self.Address
-            )
+
+            # Build a list of addresses to try: preferred first (if any), then 0x76 and 0x40.
+            CandidateAddresses = []
+            if self.PreferredAddress is not None:
+                CandidateAddresses.append(self.PreferredAddress)
+            for Addr in (0x76, 0x40):
+                if Addr not in CandidateAddresses:
+                    CandidateAddresses.append(Addr)
+
+            LastError = None
+            for Addr in CandidateAddresses:
+                try:
+                    Sensor = adafruit_bme280.Adafruit_BME280_I2C(I2c, address=Addr)
+                    # Success
+                    self.Bme = Sensor
+                    self.Address = Addr
+                    self.Available = True
+                    logging.info(
+                        "BME280 initialized at I2C address 0x%02X.", Addr
+                    )
+                    return
+                except Exception as E:
+                    LastError = E
+                    logging.debug(
+                        "BME280 not found at 0x%02X during scan: %s", Addr, E
+                    )
+
+            # If we got here, all attempts failed
+            if not BmeInitWarningLogged:
+                logging.warning(
+                    "Failed to initialize BME280 at any of addresses %s. "
+                    "Last error: %s. Telemetry will have NULL BME values.",
+                    ", ".join(f"0x{a:02X}" for a in CandidateAddresses),
+                    LastError,
+                )
+                BmeInitWarningLogged = True
+            self.Available = False
+
         except Exception as E:
             if not BmeInitWarningLogged:
                 logging.warning(
-                    "Failed to initialize BME280 at 0x%02X: %s. "
+                    "Error setting up I2C / BME280: %s. "
                     "Telemetry will have NULL BME values.",
-                    self.Address,
                     E,
                 )
                 BmeInitWarningLogged = True
@@ -238,7 +270,8 @@ class BmeReader:
             H = float(self.Bme.humidity)             # %RH
             return (T, P, H)
         except Exception as E:
-            logging.warning("Error reading BME280: %s", E)
+            logging.warning("Error reading BME280 at 0x%02X: %s",
+                            self.Address if self.Address is not None else -1, E)
             return (None, None, None)
 
 
@@ -477,10 +510,12 @@ def Main():
     Bme = BmeReader(BmeI2cAddress)
     TelemetryCsvPath = InitializeTelemetryCsv(FlightDir, PwmChannels, Mosfets)
 
+    RpicamProcess = None
     try:
         RpicamProcess = StartRpicamRecording(FlightDir)
     except Exception as E:
         logging.error("Failed to start rpicam-vid: %s", E)
+        RpicamProcess = None
         
     MissionSeconds = MissionHours * 3600.0
     SegmentSeconds = SegmentMinutes * 60.0
@@ -520,16 +555,18 @@ def Main():
                         GripperOn = (GripperState == 1)
                     )
 
-                # Check rpicam-vid process status
-                if RpicamProcess.poll() is not None:
-                    # rpicam-vid exited unexpectedly or finished.
-                    ReturnCode = RpicamProcess.returncode
-                    logging.warning(
-                        "rpicam-vid exited with return code %d before mission end. "
-                        "Stopping main loop.",
-                        ReturnCode,
-                    )
-                    break
+                # Check rpicam-vid process status (if it was started)
+                if RpicamProcess is not None:
+                    if RpicamProcess.poll() is not None:
+                        # rpicam-vid exited unexpectedly or finished.
+                        ReturnCode = RpicamProcess.returncode
+                        logging.warning(
+                            "rpicam-vid exited with return code %d before mission end. "
+                            "Continuing mission without video.",
+                            ReturnCode,
+                        )
+                        RpicamProcess = None
+
 
                 # Once per TelemetryPeriodSeconds, log telemetry
                 if Now - LastTelemetryTime >= TelemetryPeriodSeconds:
@@ -591,7 +628,7 @@ def Main():
     finally:
         logging.info("Main loop exiting, cleaning up.")
         try:
-            if RpicamProcess.poll() is None:
+            if RpicamProcess is not None and RpicamProcess.poll() is None:
                 logging.info("Terminating rpicam-vid process.")
                 RpicamProcess.terminate()
                 try:
