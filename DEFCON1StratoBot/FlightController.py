@@ -510,8 +510,10 @@ def Main():
                         BmeHumPct if BmeHumPct is not None else float("nan"),
                     )
 
+                    UtcIso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
                     Row: List[Any] = [
-                        datetime.datetime.utcnow().isoformat() + "Z",
+                        UtcIso,
                         f"{Uptime:.3f}",
                         LoopCounter,
                         EstimatedSegmentIndex,
