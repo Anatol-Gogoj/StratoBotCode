@@ -78,7 +78,7 @@ MosfetConfigs: List[Dict[str, Any]] = [
         "GpioPin": 5,  # BCM pin (SINGLE_MOSFET_PIN)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
-            {"DurationSeconds": 5, "State": 0},
+            {"DurationSeconds": 10, "State": 0},
         ],
     },
     {
@@ -86,7 +86,7 @@ MosfetConfigs: List[Dict[str, Any]] = [
         "GpioPin": 6,  # BCM pin (GRIPPER_MOSFET_PIN)
         "Pattern": [
             {"DurationSeconds": 3, "State": 1},
-            {"DurationSeconds": 5, "State": 0},
+            {"DurationSeconds": 10, "State": 0},
         ],
     },
 ]
@@ -463,11 +463,11 @@ def Main():
     LogPath = SetupLogging(FlightDir)
     logging.info("Flight directory: %s", FlightDir)
 
-    # Storage sanity check: warn if free space < 1 GB
+    # Storage sanity check: warn if free space < 16 GB
     Stat = os.statvfs(str(FlightDir))
     FreeBytes = Stat.f_bavail * Stat.f_frsize
     FreeGB = FreeBytes / (1024 ** 3)
-    if FreeGB < 1.0:
+    if FreeGB < 16.0:
         logging.warning("Low disk space before recording: approx %.2f GB free.", FreeGB)
     else:
         logging.info("Free disk space before recording: approx %.2f GB.", FreeGB)
