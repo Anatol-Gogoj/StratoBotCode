@@ -56,7 +56,7 @@ PwmChannelConfigs: List[Dict[str, Any]] = [
         "Name": "Pwm1",
         "GpioPin": 13,        # BCM pin number
         "FrequencyHz": 10e3,  # 10 kHz
-        "DutyCyclePercent": 50.0,  # initial duty; will be overridden by sequence
+        "DutyCyclePercent": 50.0,  # initial duty; overridden by sequence
     },
 ]
 
