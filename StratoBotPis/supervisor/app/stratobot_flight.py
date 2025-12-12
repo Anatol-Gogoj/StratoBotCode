@@ -1280,8 +1280,8 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
 
             LogStatus(StatusLog, f"=== Segment {SegmentLabel} ===")
 
-            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.mp4")
-            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.mp4")
+            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.h264")
+            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.h264")
             Cam0ErrPath = f"{Cam0StderrLogBase}_{SegmentLabel}.log"
             Cam1ErrPath = f"{Cam1StderrLogBase}_{SegmentLabel}.log"
 
@@ -1293,7 +1293,7 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "--camera", "0",
                         "--width", "2592", "--height", "1944",
                         "--framerate", "20", "--inline",
-                "--profile", "high",
+                        "--profile", "high",
                         "--level", "4.2",
                         "--bitrate", "25000000",
                         "--timeout", str(SegmentMs),
@@ -1312,7 +1312,7 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "--camera", "1",
                         "--width", "4608", "--height", "2592",
                         "--framerate", "15", "--inline",
-                "--profile", "high",
+                        "--profile", "high",
                         "--level", "5.1",
                         "--bitrate", "35000000",
                         "--timeout", str(SegmentMs),
