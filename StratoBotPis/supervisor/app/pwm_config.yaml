@@ -51,7 +51,7 @@ sequence:
     pin: 27
     duration: 1.0
 
-    - type: gpio_high
+  - type: gpio_high
     pin: 23
     duration: 3.0
 
