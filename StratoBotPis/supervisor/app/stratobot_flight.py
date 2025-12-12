@@ -575,12 +575,14 @@ def RunPwmSequenceFromConfig(
                     print(f"[PWM] Step: gpio_high on BCM {Pin}")
                     GPIO.output(Pin, GPIO.HIGH)
                     if Duration > 0.0:
+                        print(f"[PWM] Step: dwell {Duration:.3f} s after gpio_high")
                         time.sleep(Duration)
 
                 elif StepType == "gpio_low" and Pin is not None:
                     print(f"[PWM] Step: gpio_low on BCM {Pin}")
                     GPIO.output(Pin, GPIO.LOW)
                     if Duration > 0.0:
+                        print(f"[PWM] Step: dwell {Duration:.3f} s after gpio_low")
                         time.sleep(Duration)
 
                 elif StepType == "sleep":
