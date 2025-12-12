@@ -1114,7 +1114,7 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
 
     # 5) 5-second test recording from cam0
     print("[5] Recording 5 s test from cam0 (OV5647)...")
-    Cam0Test = os.path.join(Cam0Dir, "cam0_test.h264")
+    Cam0Test = os.path.join(Cam0Dir, "cam0_test.mp4")
     Cam0Log = os.path.join(LogsDir, "cam0_preflight_stderr.log")
     with open(Cam0Log, "w", encoding="utf-8") as Err:
         subprocess.run(
@@ -1122,8 +1122,7 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
                 "rpicam-vid",
                 "--camera", "0",
                 "--width", "2592", "--height", "1944",
-                "--framerate", "12",
-                "--codec", "h264",
+                "--framerate", "12", "--inline",
                 "--profile", "high",
                 "--level", "4.2",
                 "--bitrate", "25000000",
@@ -1145,7 +1144,7 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
 
     # 6) 5-second test recording from cam1
     print("[6] Recording 5 s test from cam1 (IMX708)...")
-    Cam1Test = os.path.join(Cam1Dir, "cam1_test.h264")
+    Cam1Test = os.path.join(Cam1Dir, "cam1_test.mp4")
     Cam1Log = os.path.join(LogsDir, "cam1_preflight_stderr.log")
     with open(Cam1Log, "w", encoding="utf-8") as Err:
         subprocess.run(
@@ -1153,8 +1152,7 @@ def RunPreflightCheck(BaseDir: str, RequiredFreeGb: int) -> None:
                 "rpicam-vid",
                 "--camera", "1",
                 "--width", "4608", "--height", "2592",
-                "--framerate", "15",
-                "--codec", "h264",
+                "--framerate", "15", "--inline",
                 "--profile", "high",
                 "--level", "5.1",
                 "--bitrate", "35000000",
@@ -1282,8 +1280,8 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
 
             LogStatus(StatusLog, f"=== Segment {SegmentLabel} ===")
 
-            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.h264")
-            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.h264")
+            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.mp4")
+            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.mp4")
             Cam0ErrPath = f"{Cam0StderrLogBase}_{SegmentLabel}.log"
             Cam1ErrPath = f"{Cam1StderrLogBase}_{SegmentLabel}.log"
 
@@ -1294,9 +1292,8 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "rpicam-vid",
                         "--camera", "0",
                         "--width", "2592", "--height", "1944",
-                        "--framerate", "20",
-                        "--codec", "h264",
-                        "--profile", "high",
+                        "--framerate", "20", "--inline",
+                "--profile", "high",
                         "--level", "4.2",
                         "--bitrate", "25000000",
                         "--timeout", str(SegmentMs),
@@ -1314,9 +1311,8 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "rpicam-vid",
                         "--camera", "1",
                         "--width", "4608", "--height", "2592",
-                        "--framerate", "15",
-                        "--codec", "h264",
-                        "--profile", "high",
+                        "--framerate", "15", "--inline",
+                "--profile", "high",
                         "--level", "5.1",
                         "--bitrate", "35000000",
                         "--timeout", str(SegmentMs),
