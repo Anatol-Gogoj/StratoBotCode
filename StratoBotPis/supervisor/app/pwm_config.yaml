@@ -14,10 +14,6 @@ sequence:
     pin: 12
     duration: 2.0
 
-  - type: pwm_start # HVM 1
-    pin: 13
-    duration: 2.0
-
   - type: gpio_high
     pin: 27
     duration: 1.0
