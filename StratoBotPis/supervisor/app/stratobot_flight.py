@@ -536,13 +536,12 @@ def RunPwmSequenceFromConfig(
         if Step.get("pin") is not None
         and Step.get("type") in ("gpio_high", "gpio_low")
     ]
+
     if GpioPins:
         try:
-            for Pin in set(GpioPins):
-                GPIO.output(Pin, GPIO.LOW)
-                GPIO.cleanup(Pin)
-        except Exception:
-            pass
+            PwmSetupGpio(GpioPins)
+        except Exception as Exc:
+            print(f"[PWM] WARNING: Failed to configure GPIO pins: {Exc}")
 
     try:
         print("[PWM] Entering sequence loop; StopEvent will terminate this thread.")
@@ -588,12 +587,12 @@ def RunPwmSequenceFromConfig(
                 elif StepType == "sleep":
                     if Duration > 0.0:
                         print(f"[PWM] Step: sleep {Duration:.3f} s")
-                        Remaining = Duration
-                        Slice = 0.1
-                        while Remaining > 0.0 and not StopEvent.is_set():
-                            ThisSlice = min(Slice, StartDelaySec - Elapsed)
-                            time.sleep(ThisSlice)
-                            Elapsed += ThisSlice
+                    Remaining = Duration
+                    Slice = 0.1
+                    while Remaining > 0.0 and not StopEvent.is_set():
+                        ThisSlice = min(Slice, Remaining)
+                        time.sleep(ThisSlice)
+                        Remaining -= ThisSlice
 
                 else:
                     print(f"[PWM] WARN: Unknown step type '{StepType}', skipping.")
