@@ -4,7 +4,7 @@ pwm:
     "13":
       duty_percent: 70      # Duty cycle for BCM 13 HVM 2
     "12":
-      duty_percent: 0      # Duty cycle for BCM 12 HVM 1
+      duty_percent: 70      # Duty cycle for BCM 12 HVM 1
 
 sequence:
   # Phase 1: PWM on BCM 13, then 27 / 23 toggles
