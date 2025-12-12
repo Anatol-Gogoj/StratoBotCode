@@ -1,39 +1,66 @@
 pwm:
-  frequency_hz: 10000
+  frequency_hz: 10000        # PWM frequency for both hardware PWM pins
   pins:
-    "12": { duty_percent: 70 } # HVM 1
-    "13": { duty_percent: 70 } # HVM 2
+    "13":
+      duty_percent: 70      # Duty cycle for BCM 13 HVM 2
+    "12":
+      duty_percent: 0      # Duty cycle for BCM 12 HVM 1
 
 sequence:
-  # SLDEAs Pin 27
-  - type: pwm_start
-  - type: sleep
-    duration: 1.0
+  # Phase 1: PWM on BCM 13, then 27 / 23 toggles
+
+  # SLDEAs
+  - type: pwm_start # HVM 2
+    pin: 13
+    duration: 2.0
+
   - type: gpio_high
     pin: 27
     duration: 1.0
+
   - type: gpio_low
     pin: 27
-  - type: sleep
     duration: 1.0
-  - type: pwm_stop
-    duration: 0.0
 
-  # Grippers Pin 23
-  - type: pwm_start
-  - type: sleep
+  - type: gpio_high
+    pin: 27
     duration: 1.0
+
+  - type: gpio_low
+    pin: 27
+    duration: 1.0
+
+  - type: gpio_high
+    pin: 27
+    duration: 1.0
+
+  - type: gpio_low
+    pin: 27
+    duration: 1.0
+
+  # Grippers
   - type: gpio_high
     pin: 23
     duration: 3.0
+
   - type: gpio_low
     pin: 23
-  - type: sleep
-    duration: 1.0
+    duration: 3.0
+
+  - type: gpio_high
+    pin: 23
+    duration: 3.0
+
+  - type: gpio_low
+    pin: 23
+    duration: 3.0
+
   - type: pwm_stop
-    duration: 0.0
+    pin: 13
+    duration: 2.0
 
   # Wait between loops
   - type: sleep
     pin: null
-    duration: 5.0
+    duration: 3.0
+
