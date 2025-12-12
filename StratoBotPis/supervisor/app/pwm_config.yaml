@@ -11,7 +11,7 @@ sequence:
 
   # SLDEAs
   - type: pwm_start # HVM 2
-    pin: 13
+    pin: 12
     duration: 2.0
 
   - type: gpio_high
@@ -56,7 +56,7 @@ sequence:
     duration: 3.0
 
   - type: pwm_stop
-    pin: 13
+    pin: 12
     duration: 2.0
 
   # Wait between loops
