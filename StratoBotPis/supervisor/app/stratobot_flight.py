@@ -538,9 +538,11 @@ def RunPwmSequenceFromConfig(
     ]
     if GpioPins:
         try:
-            PwmSetupGpio(GpioPins)
-        except Exception as Exc:
-            print(f"[PWM] WARNING: Failed to configure GPIO pins: {Exc}")
+            for Pin in set(GpioPins):
+                GPIO.output(Pin, GPIO.LOW)
+                GPIO.cleanup(Pin)
+        except Exception:
+            pass
 
     try:
         print("[PWM] Entering sequence loop; StopEvent will terminate this thread.")
@@ -557,19 +559,29 @@ def RunPwmSequenceFromConfig(
                     print("[PWM] Step: pwm_start")
                     Controllers["pwm13"].Start()
                     Controllers["pwm12"].Start()
+                    if Duration > 0.0:
+                        print(f"[PWM] Step: dwell {Duration:.3f} s after pwm_start")
+                        time.sleep(Duration)
 
                 elif StepType == "pwm_stop":
                     print("[PWM] Step: pwm_stop")
                     Controllers["pwm13"].Stop()
                     Controllers["pwm12"].Stop()
+                    if Duration > 0.0:
+                        print(f"[PWM] Step: dwell {Duration:.3f} s after pwm_stop")
+                        time.sleep(Duration)
 
                 elif StepType == "gpio_high" and Pin is not None:
                     print(f"[PWM] Step: gpio_high on BCM {Pin}")
                     GPIO.output(Pin, GPIO.HIGH)
+                    if Duration > 0.0:
+                        time.sleep(Duration)
 
                 elif StepType == "gpio_low" and Pin is not None:
                     print(f"[PWM] Step: gpio_low on BCM {Pin}")
                     GPIO.output(Pin, GPIO.LOW)
+                    if Duration > 0.0:
+                        time.sleep(Duration)
 
                 elif StepType == "sleep":
                     if Duration > 0.0:
@@ -577,9 +589,10 @@ def RunPwmSequenceFromConfig(
                         Remaining = Duration
                         Slice = 0.1
                         while Remaining > 0.0 and not StopEvent.is_set():
-                            ThisSlice = min(Slice, Remaining)
+                            ThisSlice = min(Slice, StartDelaySec - Elapsed)
                             time.sleep(ThisSlice)
-                            Remaining -= ThisSlice
+                            Elapsed += ThisSlice
+
                 else:
                     print(f"[PWM] WARN: Unknown step type '{StepType}', skipping.")
 
