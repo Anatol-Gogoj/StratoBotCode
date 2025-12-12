@@ -4,7 +4,7 @@ pwm:
     "13":
       duty_percent: 100      # Duty cycle for BCM 13 SLDEA
     "12":
-      duty_percent: 60      # Duty cycle for BCM 12
+      duty_percent: 100      # Duty cycle for BCM 12
 
 sequence:
   # Phase 1: PWM on BCM 13, then 23/24 toggles
