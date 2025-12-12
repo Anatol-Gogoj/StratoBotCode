@@ -254,23 +254,24 @@ PwmChannelForPin = {
 class SysfsPwmController:
     """
     Simple wrapper around /sys/class/pwm for a single PWM channel on a given chip.
+    Near-identical implementation to PWM_control_test.py.
     """
 
-    def __init__(self, chipIndex, channelIndex, periodNs, dutyNs):
-        self.chipIndex = chipIndex
-        self.channelIndex = channelIndex
-        self.periodNs = int(periodNs)
-        self.dutyNs = int(dutyNs)
+    def __init__(self, ChipIndex, ChannelIndex, PeriodNs, DutyNs):
+        self.ChipIndex = ChipIndex
+        self.ChannelIndex = ChannelIndex
+        self.PeriodNs = int(PeriodNs)
+        self.DutyNs = int(DutyNs)
 
-        self.chipPath = f"/sys/class/pwm/pwmchip{self.chipIndex}"
-        self.channelPath = os.path.join(self.chipPath, f"pwm{self.channelIndex}")
-        self.enabledPath = os.path.join(self.channelPath, "enable")
-        self.periodPath = os.path.join(self.channelPath, "period")
-        self.dutyPath = os.path.join(self.channelPath, "duty_cycle")
+        self.ChipPath = f"/sys/class/pwm/pwmchip{self.ChipIndex}"
+        self.ChannelPath = os.path.join(self.ChipPath, f"pwm{self.ChannelIndex}")
+        self.EnabledPath = os.path.join(self.ChannelPath, "enable")
+        self.PeriodPath = os.path.join(self.ChannelPath, "period")
+        self.DutyPath = os.path.join(self.ChannelPath, "duty_cycle")
 
-        if not os.path.isdir(self.chipPath):
+        if not os.path.isdir(self.ChipPath):
             raise RuntimeError(
-                f"PWM chip directory '{self.chipPath}' not found. "
+                f"PWM chip directory '{self.ChipPath}' not found. "
                 "Check that dtoverlay=pwm-2chan is in /boot/firmware/config.txt "
                 "and that you rebooted."
             )
@@ -278,98 +279,98 @@ class SysfsPwmController:
         self._ExportChannel()
         self._ConfigureTiming()
 
-    def _Write(self, path, value):
-        with open(path, "w") as f:
-            f.write(str(value))
+    def _Write(self, Path, Value):
+        with open(Path, "w") as File:
+            File.write(str(Value))
 
     def _ExportChannel(self):
-        if not os.path.isdir(self.channelPath):
-            exportPath = os.path.join(self.chipPath, "export")
-            print(
-                f"[PWM] Exporting channel {self.channelIndex} "
-                f"on pwmchip{self.chipIndex}"
-            )
-            self._Write(exportPath, self.channelIndex)
+        if not os.path.isdir(self.ChannelPath):
+            ExportPath = os.path.join(self.ChipPath, "export")
+            print(f"[PWM] Exporting channel {self.ChannelIndex} on pwmchip{self.ChipIndex}")
+            self._Write(ExportPath, self.ChannelIndex)
             # Wait for kernel to create the directory
             for _ in range(50):
-                if os.path.isdir(self.channelPath):
+                if os.path.isdir(self.ChannelPath):
                     break
                 time.sleep(0.02)
-            if not os.path.isdir(self.channelPath):
+            if not os.path.isdir(self.ChannelPath):
                 raise RuntimeError(
-                    f"Failed to export PWM channel {self.channelIndex} "
-                    f"on pwmchip{self.chipIndex}"
+                    f"Failed to export PWM channel {self.ChannelIndex} "
+                    f"on pwmchip{self.ChipIndex}"
                 )
 
     def _ConfigureTiming(self):
         # Always disable before changing timing
-        if os.path.exists(self.enabledPath):
-            self._Write(self.enabledPath, 0)
+        if os.path.exists(self.EnabledPath):
+            self._Write(self.EnabledPath, 0)
 
         print(
-            f"[PWM] Setting period={self.periodNs} ns, duty={self.dutyNs} ns "
-            f"on pwmchip{self.chipIndex}/pwm{self.channelIndex}"
+            f"[PWM] Setting period={self.PeriodNs} ns, duty={self.DutyNs} ns "
+            f"on pwmchip{self.ChipIndex}/pwm{self.ChannelIndex}"
         )
-        self._Write(self.periodPath, self.periodNs)
-        self._Write(self.dutyPath, self.dutyNs)
+        self._Write(self.PeriodPath, self.PeriodNs)
+        self._Write(self.DutyPath, self.DutyNs)
 
     def Start(self):
         print(
-            f"[PWM] Enabling pwmchip{self.chipIndex}/pwm{self.channelIndex} "
-            f"({self.periodNs} ns, {self.dutyNs} ns)"
+            f"[PWM] Enabling pwmchip{self.ChipIndex}/pwm{self.ChannelIndex} "
+            f"({self.PeriodNs} ns, {self.DutyNs} ns)"
         )
-        self._Write(self.dutyPath, self.dutyNs)
-        self._Write(self.enabledPath, 1)
+        self._Write(self.DutyPath, self.DutyNs)
+        self._Write(self.EnabledPath, 1)
 
     def Stop(self):
-        print(f"[PWM] Disabling pwmchip{self.chipIndex}/pwm{self.channelIndex}")
-        if os.path.exists(self.enabledPath):
-            self._Write(self.enabledPath, 0)
+        print(f"[PWM] Disabling pwmchip{self.ChipIndex}/pwm{self.ChannelIndex}")
+        if os.path.exists(self.EnabledPath):
+            self._Write(self.EnabledPath, 0)
 
-    def SetDuty(self, dutyNs):
-        self.dutyNs = int(dutyNs)
+    def SetDuty(self, DutyNs):
+        self.DutyNs = int(DutyNs)
         print(
-            f"[PWM] Updating duty cycle to {self.dutyNs} ns "
-            f"on pwmchip{self.chipIndex}/pwm{self.channelIndex}"
+            f"[PWM] Updating duty cycle to {self.DutyNs} ns "
+            f"on pwmchip{self.ChipIndex}/pwm{self.ChannelIndex}"
         )
-        self._Write(self.dutyPath, self.dutyNs)
+        self._Write(self.DutyPath, self.DutyNs)
 
-    def Cleanup(self, unexport=False):
+    def Cleanup(self, Unexport=False):
         self.Stop()
-        if unexport:
-            unexportPath = os.path.join(self.chipPath, "unexport")
+        if Unexport:
+            UnexportPath = os.path.join(self.ChipPath, "unexport")
             print(
-                f"[PWM] Unexporting channel {self.channelIndex} "
-                f"on pwmchip{self.chipIndex}"
+                f"[PWM] Unexporting pwmchip{self.ChipIndex}/pwm{self.ChannelIndex}"
             )
-            self._Write(unexportPath, self.channelIndex)
+            self._Write(UnexportPath, self.ChannelIndex)
 
 
 def LoadPwmConfig(ConfigPath):
     """
-    Load the PWM YAML config (same structure as PWM_control_test.py):
+    Load the PWM YAML config with the same semantics as PWM_control_test.py.
 
-    pwm:
-      frequency_hz: 1000.0
-      pins:
-        "13":
-          duty_percent: 50.0
-        "12":
-          duty_percent: 50.0
+    Expected structure:
 
-    sequence:
-      - type: pwm_start
-        duration: 1.0
-      - type: sleep
-        duration: 5.0
-      - type: pwm_stop
-        duration: 0.5
-      - type: gpio_high
-        pin: 23
-        duration: 1.0
-      - type: gpio_low
-        pin: 23
-        duration: 1.0
+      pwm:
+        frequency_hz: 1000.0
+        pins:
+          "13":
+            duty_percent: 50.0
+          "12":
+            duty_percent: 50.0
+
+      sequence:
+        - type: pwm_start
+          pin: 13
+          duration: 1.0
+        - type: sleep
+          duration: 5.0
+        - type: pwm_stop
+          pin: 13
+          duration: 0.5
+        - type: gpio_high
+          pin: 23
+          duration: 1.0
+        - type: gpio_low
+          pin: 23
+          duration: 1.0
     """
     if yaml is None:
         raise RuntimeError("PyYAML is not available; cannot load PWM config.")
@@ -441,6 +442,9 @@ def LoadPwmConfig(ConfigPath):
 
 
 def PwmSetupGpio(GpioPins):
+    """
+    Configure non-PWM pins as outputs, matching PWM_control_test.py behavior.
+    """
     print("[PWM] Setting up GPIO (BCM mode) via RPi.GPIO for PWM sequence.")
     GPIO.setmode(GPIO.BCM)
     UniquePins = sorted(set(GpioPins))
@@ -465,10 +469,17 @@ def RunPwmSequenceFromConfig(
     """
     Background PWM sequencer used by the 'launch' subcommand.
 
-    - Loads pwm_config.yaml (or similar)
-    - Optionally waits StartDelaySec before starting
-    - Ignores AltitudeTriggerM for now (placeholder for future GPS/pressure logic)
-    - Loops through the configured sequence until StopEvent is set
+    This is intentionally made functionally equivalent to PWM_control_test.py's
+    main loop:
+
+      - pwm_start / pwm_stop act on the specific 'pin' in each step
+      - gpio_high / gpio_low drive only the named pin
+      - sleep steps just wait for the configured duration
+
+    Differences versus PWM_control_test.py:
+      - Runs in a loop that can be stopped via StopEvent
+      - Optional StartDelaySec before starting sequence
+      - AltitudeTriggerM is a placeholder and currently ignored
     """
     print(f"[PWM] Launching PWM thread with config: {ConfigPath}")
 
@@ -488,14 +499,15 @@ def RunPwmSequenceFromConfig(
     Duty12Ns = Cfg["duty12_ns"]
     Steps = Cfg["steps"]
 
+    # Optional start delay (time-based trigger)
     if StartDelaySec > 0.0:
         print(f"[PWM] Waiting {StartDelaySec:.1f} s before starting sequence.")
         Elapsed = 0.0
         Slice = 0.1
         while Elapsed < StartDelaySec and not StopEvent.is_set():
-            time.sleep(min(Slice, StartDelaySec - Elapsed))
-            Elapsed += Slice
-
+            ThisSlice = min(Slice, StartDelaySec - Elapsed)
+            time.sleep(ThisSlice)
+            Elapsed += ThisSlice
         if StopEvent.is_set():
             print("[PWM] StopEvent set during start delay; exiting PWM thread.")
             return
@@ -512,31 +524,34 @@ def RunPwmSequenceFromConfig(
         f"steps={len(Steps)}"
     )
 
-    Controllers = {}
+    # Initialize PWM controllers exactly like PWM_control_test.py
+    ControllersByPin = {}
     try:
-        Controllers["pwm13"] = SysfsPwmController(
+        Pwm13 = SysfsPwmController(
             PwmChipIndex,
             PwmChannelForPin[PwmPinThirteen],
             PeriodNs,
             Duty13Ns,
         )
-        Controllers["pwm12"] = SysfsPwmController(
+        Pwm12 = SysfsPwmController(
             PwmChipIndex,
             PwmChannelForPin[PwmPinTwelve],
             PeriodNs,
             Duty12Ns,
         )
+        ControllersByPin[PwmPinThirteen] = Pwm13
+        ControllersByPin[PwmPinTwelve] = Pwm12
     except Exception as Exc:
         print(f"[PWM] ERROR: Failed to initialize PWM controllers: {Exc}")
         return
 
+    # Determine which pins are used for non-PWM GPIO operations
     GpioPins = [
         Step["pin"]
         for Step in Steps
         if Step.get("pin") is not None
         and Step.get("type") in ("gpio_high", "gpio_low")
     ]
-
     if GpioPins:
         try:
             PwmSetupGpio(GpioPins)
@@ -545,7 +560,11 @@ def RunPwmSequenceFromConfig(
 
     try:
         print("[PWM] Entering sequence loop; StopEvent will terminate this thread.")
+        Iteration = 0
         while not StopEvent.is_set():
+            Iteration += 1
+            print(f"\n[PWM] Starting sequence iteration {Iteration}")
+
             for Step in Steps:
                 if StopEvent.is_set():
                     break
@@ -555,56 +574,52 @@ def RunPwmSequenceFromConfig(
                 Duration = float(Step.get("duration", 0.0))
 
                 if StepType == "pwm_start":
-                    print("[PWM] Step: pwm_start")
-                    Controllers["pwm13"].Start()
-                    Controllers["pwm12"].Start()
+                    if Pin not in ControllersByPin:
+                        print(f"[PWM] WARN: No PWM controller for BCM {Pin}, skipping pwm_start.")
+                    else:
+                        print(f"[PWM] Step: pwm_start on BCM {Pin}")
+                        ControllersByPin[Pin].Start()
                     if Duration > 0.0:
-                        print(f"[PWM] Step: dwell {Duration:.3f} s after pwm_start")
                         time.sleep(Duration)
 
                 elif StepType == "pwm_stop":
-                    print("[PWM] Step: pwm_stop")
-                    Controllers["pwm13"].Stop()
-                    Controllers["pwm12"].Stop()
+                    if Pin not in ControllersByPin:
+                        print(f"[PWM] WARN: No PWM controller for BCM {Pin}, skipping pwm_stop.")
+                    else:
+                        print(f"[PWM] Step: pwm_stop on BCM {Pin}")
+                        ControllersByPin[Pin].Stop()
                     if Duration > 0.0:
-                        print(f"[PWM] Step: dwell {Duration:.3f} s after pwm_stop")
                         time.sleep(Duration)
 
                 elif StepType == "gpio_high" and Pin is not None:
-                    print(f"[PWM] Step: gpio_high on BCM {Pin}")
+                    print(f"[PWM] Step: gpio_high on BCM {Pin} for {Duration} s")
                     GPIO.output(Pin, GPIO.HIGH)
                     if Duration > 0.0:
-                        print(f"[PWM] Step: dwell {Duration:.3f} s after gpio_high")
                         time.sleep(Duration)
 
                 elif StepType == "gpio_low" and Pin is not None:
                     print(f"[PWM] Step: gpio_low on BCM {Pin}")
                     GPIO.output(Pin, GPIO.LOW)
                     if Duration > 0.0:
-                        print(f"[PWM] Step: dwell {Duration:.3f} s after gpio_low")
                         time.sleep(Duration)
 
                 elif StepType == "sleep":
+                    print(f"[PWM] Step: sleep {Duration} s")
                     if Duration > 0.0:
-                        print(f"[PWM] Step: sleep {Duration:.3f} s")
-                    Remaining = Duration
-                    Slice = 0.1
-                    while Remaining > 0.0 and not StopEvent.is_set():
-                        ThisSlice = min(Slice, Remaining)
-                        time.sleep(ThisSlice)
-                        Remaining -= ThisSlice
+                        time.sleep(Duration)
 
                 else:
                     print(f"[PWM] WARN: Unknown step type '{StepType}', skipping.")
 
+            print("[PWM] Sequence complete, restarting...")
+
     finally:
         print("[PWM] Cleaning up PWM and GPIO.")
-        for Ctrl in Controllers.values():
+        for Ctrl in ControllersByPin.values():
             try:
-                Ctrl.Cleanup(unexport=False)
+                Ctrl.Cleanup(Unexport=False)
             except Exception as Exc:
                 print(f"[PWM] WARNING: PWM controller cleanup failed: {Exc}")
-
         try:
             GPIO.cleanup()
         except Exception:
