@@ -67,7 +67,7 @@ NODE_STATUS_ID = CAN_STATUS_BASE_ID + NODE_INDEX
 
 
 # If no START_RECORD is heard within this many seconds from boot, auto-start.
-AUTO_START_SECONDS = 30 * 60  # 30 minutes
+AUTO_START_SECONDS = 1 * 60  # 1 minutes
 
 # Where this node stores its own recordings and logs.
 NODE_ROOT_DIR = "/home/admin/StratoBotNode00"  # change to SD path if needed, e.g. "/home/admin/StratoBotNodeData"
