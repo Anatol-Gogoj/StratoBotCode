@@ -1280,14 +1280,37 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
 
             LogStatus(StatusLog, f"=== Segment {SegmentLabel} ===")
 
-            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.h264")
-            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.h264")
+            Cam0Out = os.path.join(Cam0Dir, f"cam0_{SegmentLabel}.mp4")
+            Cam1Out = os.path.join(Cam1Dir, f"cam1_{SegmentLabel}.mp4")
             Cam0ErrPath = f"{Cam0StderrLogBase}_{SegmentLabel}.log"
             Cam1ErrPath = f"{Cam1StderrLogBase}_{SegmentLabel}.log"
 
             LogStatus(StatusLog, f"Segment {SegmentLabel}: starting cam0 -> {Cam0Out}")
+            LogStatus(StatusLog, f"Segment {SegmentLabel}: starting cam1 -> {Cam1Out}")
+
             with open(Cam0ErrPath, "w", encoding="utf-8") as Cam0Err, open(Cam1ErrPath, "w", encoding="utf-8") as Cam1Err:
-                Cam0Proc = subprocess.Popen(
+                def WaitProcOrStop(Proc: subprocess.Popen, Name: str) -> int:
+                    while True:
+                        Rc = Proc.poll()
+                        if Rc is not None:
+                            return Rc
+                        if StopEvent.is_set():
+                            LogStatus(StatusLog, f"Segment {SegmentLabel}: stop requested; terminating {Name}.")
+                            try:
+                                Proc.terminate()
+                            except Exception:
+                                pass
+                            time.sleep(0.5)
+                            if Proc.poll() is None:
+                                try:
+                                    Proc.kill()
+                                except Exception:
+                                    pass
+                            return Proc.wait()
+                        time.sleep(0.25)
+
+                # rpicam-vid -> stdout (Annex-B H.264)
+                Cam0RpiProc = subprocess.Popen(
                     [
                         "rpicam-vid",
                         "--camera", "0",
@@ -1297,16 +1320,16 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "--level", "4.2",
                         "--bitrate", "25000000",
                         "--timeout", str(SegmentMs),
-                        "--output", Cam0Out,
+                        "--output", "-",
                         "--nopreview",
                     ],
-                    stdout=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
                     stderr=Cam0Err,
-                    text=True,
+                    text=False,
+                    bufsize=0,
                 )
 
-                LogStatus(StatusLog, f"Segment {SegmentLabel}: starting cam1 -> {Cam1Out}")
-                Cam1Proc = subprocess.Popen(
+                Cam1RpiProc = subprocess.Popen(
                     [
                         "rpicam-vid",
                         "--camera", "1",
@@ -1316,26 +1339,97 @@ def StartFlightRecording(BaseDir: str, NvmeDev: str, WarnMilliC: int, CritMilliC
                         "--level", "5.1",
                         "--bitrate", "35000000",
                         "--timeout", str(SegmentMs),
-                        "--output", Cam1Out,
+                        "--output", "-",
                         "--nopreview",
                     ],
-                    stdout=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
                     stderr=Cam1Err,
-                    text=True,
+                    text=False,
+                    bufsize=0,
                 )
 
-                LogStatus(StatusLog, f"Segment {SegmentLabel}: waiting for both cameras...")
-                Cam0Status = Cam0Proc.wait()
-                LogStatus(StatusLog, f"Segment {SegmentLabel}: cam0 exit status {Cam0Status}")
-                Cam1Status = Cam1Proc.wait()
-                LogStatus(StatusLog, f"Segment {SegmentLabel}: cam1 exit status {Cam1Status}")
+                # ffmpeg mux-only -> MP4 (minimal CPU)
+                Cam0FfmpegProc = subprocess.Popen(
+                    [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel", "warning",
+                        "-fflags", "+genpts",
+                        "-analyzeduration", "2M",
+                        "-probesize", "2M",
+                        "-f", "h264",
+                        "-r", "20",
+                        "-i", "pipe:0",
+                        "-c:v", "copy",
+                        "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+                        "-y",
+                        Cam0Out,
+                    ],
+                    stdin=Cam0RpiProc.stdout,
+                    stdout=subprocess.DEVNULL,
+                    stderr=Cam0Err,
+                    text=False,
+                )
 
-            if Cam0Status != 0 or Cam1Status != 0:
-                LogStatus(StatusLog, f"Segment {SegmentLabel}: ERROR, one or both cameras failed. Aborting flight.")
-                StopEvent.set()
-                break
+                Cam1FfmpegProc = subprocess.Popen(
+                    [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel", "warning",
+                        "-fflags", "+genpts",
+                        "-analyzeduration", "2M",
+                        "-probesize", "2M",
+                        "-f", "h264",
+                        "-r", "15",
+                        "-i", "pipe:0",
+                        "-c:v", "copy",
+                        "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+                        "-y",
+                        Cam1Out,
+                    ],
+                    stdin=Cam1RpiProc.stdout,
+                    stdout=subprocess.DEVNULL,
+                    stderr=Cam1Err,
+                    text=False,
+                )
 
-            LogStatus(StatusLog, f"Segment {SegmentLabel}: complete.")
+                # Let ffmpeg receive EOF properly
+                if Cam0RpiProc.stdout is not None:
+                    Cam0RpiProc.stdout.close()
+                if Cam1RpiProc.stdout is not None:
+                    Cam1RpiProc.stdout.close()
+
+                # Quick sanity: if ffmpeg dies immediately, kill rpicam to avoid pipe deadlock
+                time.sleep(0.2)
+                if Cam0FfmpegProc.poll() is not None:
+                    LogStatus(StatusLog, f"Segment {SegmentLabel}: cam0 ffmpeg died early rc={Cam0FfmpegProc.returncode}")
+                    try:
+                        Cam0RpiProc.kill()
+                    except Exception:
+                        pass
+                if Cam1FfmpegProc.poll() is not None:
+                    LogStatus(StatusLog, f"Segment {SegmentLabel}: cam1 ffmpeg died early rc={Cam1FfmpegProc.returncode}")
+                    try:
+                        Cam1RpiProc.kill()
+                    except Exception:
+                        pass
+
+                LogStatus(StatusLog, f"Segment {SegmentLabel}: waiting for both camera pipelines...")
+
+                Cam0RpiStatus = WaitProcOrStop(Cam0RpiProc, "cam0 rpicam-vid")
+                Cam1RpiStatus = WaitProcOrStop(Cam1RpiProc, "cam1 rpicam-vid")
+
+                Cam0MuxStatus = WaitProcOrStop(Cam0FfmpegProc, "cam0 ffmpeg")
+                Cam1MuxStatus = WaitProcOrStop(Cam1FfmpegProc, "cam1 ffmpeg")
+
+                LogStatus(StatusLog, f"Segment {SegmentLabel}: cam0 rpicam exit {Cam0RpiStatus}, ffmpeg exit {Cam0MuxStatus}")
+                LogStatus(StatusLog, f"Segment {SegmentLabel}: cam1 rpicam exit {Cam1RpiStatus}, ffmpeg exit {Cam1MuxStatus}")
+
+                if os.path.exists(Cam0Out):
+                    LogStatus(StatusLog, f"Segment {SegmentLabel}: cam0 mp4 size={os.path.getsize(Cam0Out)} bytes")
+                if os.path.exists(Cam1Out):
+                    LogStatus(StatusLog, f"Segment {SegmentLabel}: cam1 mp4 size={os.path.getsize(Cam1Out)} bytes")
+
     finally:
         LogStatus(StatusLog, "Stopping thermal watchdog...")
         StopEvent.set()
